@@ -1584,7 +1584,8 @@ void VR::ProcessInput()
         }
         else
         {
-            m_CrouchToggleActive = !m_CrouchToggleActive;
+            // Left stick click is recenter only. Crouch is its own toggle on
+            // the right stick click so recentering cannot unexpectedly crouch.
             ResetPosition();
         }
     }
@@ -1693,6 +1694,11 @@ void VR::ProcessInput()
             m_Game->ClientCmd_Unrestricted("invnext");
         }
     }
+
+    // Right stick click toggles crouch. The Crouch action is a momentary
+    // button, so latch it instead of requiring a hold.
+    if (crouchJustPressed)
+        m_CrouchToggleActive = !m_CrouchToggleActive;
 
     const bool wantDuck = (!suppressCrouch) && (crouchButtonDown || m_CrouchToggleActive);
     // IMPORTANT: only release -duck if *we* previously issued +duck.

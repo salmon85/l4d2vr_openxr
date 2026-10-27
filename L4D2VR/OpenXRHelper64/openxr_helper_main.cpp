@@ -2215,9 +2215,9 @@ namespace
             return static_cast<size_t>(id);
         }
 
-        static const std::array<BooleanActionDef, 31>& BooleanDefs();
+        static const std::array<BooleanActionDef, 32>& BooleanDefs();
         static const std::array<BooleanActionDef, 4>& ExtraBooleanDefs();
-        static const std::array<FloatDigitalActionDef, 4>& FloatDigitalDefs();
+        static const std::array<FloatDigitalActionDef, 5>& FloatDigitalDefs();
         static const std::array<AnalogActionDef, 2>& AnalogDefs();
 
         bool Path(const char* text, XrPath& out, Logger& log);
@@ -4577,12 +4577,13 @@ float4 main(float4 position : SV_Position, float2 uv : TEXCOORD0) : SV_Target
     };
 
 #endif
-    const std::array<OpenXrInputBridge::BooleanActionDef, 31>& OpenXrInputBridge::BooleanDefs()
+    const std::array<OpenXrInputBridge::BooleanActionDef, 32>& OpenXrInputBridge::BooleanDefs()
     {
-        static const std::array<BooleanActionDef, 31> defs =
+        static const std::array<BooleanActionDef, 32> defs =
         {{
             { L4D2VROpenXrActionId::ActivateVR, "activate_vr", "Activate VR" },
             { L4D2VROpenXrActionId::Jump, "jump", "Jump" },
+            { L4D2VROpenXrActionId::Crouch, "crouch", "Crouch" },
             { L4D2VROpenXrActionId::SecondaryAttack, "secondary_attack", "Secondary Attack" },
             { L4D2VROpenXrActionId::Teleport, "teleport", "Teleport" },
             { L4D2VROpenXrActionId::NextItem, "next_item", "Next Item" },
@@ -4629,11 +4630,12 @@ float4 main(float4 position : SV_Position, float2 uv : TEXCOORD0) : SV_Target
         return defs;
     }
 
-    const std::array<OpenXrInputBridge::FloatDigitalActionDef, 4>& OpenXrInputBridge::FloatDigitalDefs()
+    const std::array<OpenXrInputBridge::FloatDigitalActionDef, 5>& OpenXrInputBridge::FloatDigitalDefs()
     {
-        static const std::array<FloatDigitalActionDef, 4> defs =
+        static const std::array<FloatDigitalActionDef, 5> defs =
         {{
             { L4D2VROpenXrActionId::PrimaryAttack, "primary_attack", "Primary Attack", 0.45f },
+            { L4D2VROpenXrActionId::SecondaryAttack, "secondary_attack_value", "Secondary Attack Value", 0.45f },
             { L4D2VROpenXrActionId::Use, "use", "Use", 0.45f },
             { L4D2VROpenXrActionId::Reload, "reload", "Reload", 0.45f },
             { L4D2VROpenXrActionId::Flashlight, "flashlight_value", "Flashlight Grip", 0.55f },
@@ -4931,30 +4933,41 @@ float4 main(float4 position : SV_Position, float2 uv : TEXCOORD0) : SV_Target
 
         AddBinding(b, m_AnalogActions[Index(L4D2VROpenXrActionId::Walk)], leftStick.c_str());
         AddBinding(b, m_AnalogActions[Index(L4D2VROpenXrActionId::Turn)], rightStick.c_str());
-        // L4D2VR Touch manifest: left stick click = recenter, right stick click
-        // = flashlight. Do not bind CustomAction1/InventoryQuickSwitch here.
+        // Left stick click = recenter. Right stick click = crouch; flashlight
+        // is the right grip value, which is what worked before.
         AddBinding(b, m_BooleanActions[Index(L4D2VROpenXrActionId::ResetPosition)], (leftStick + "/click").c_str());
-        AddBinding(b, m_BooleanActions[Index(L4D2VROpenXrActionId::Flashlight)], (rightStick + "/click").c_str());
 
         AddBinding(b, m_FloatDigitalActions[Index(L4D2VROpenXrActionId::PrimaryAttack)], "/user/hand/right/input/trigger/value");
-        AddBinding(b, m_FloatDigitalActions[Index(L4D2VROpenXrActionId::Use)], "/user/hand/left/input/trigger/value");
+        AddBinding(b, m_FloatDigitalActions[Index(L4D2VROpenXrActionId::SecondaryAttack)], "/user/hand/left/input/trigger/value");
+
+        // Oculus Touch exposes thumbstick x/y/click, not dpad subpaths. Menu
+        // and item dpads are synthesized from the analog Walk/Turn values in
+        // PublishDerivedDpadActions. Right stick click is Crouch.
+        AddBinding(b, m_BooleanActions[Index(L4D2VROpenXrActionId::Crouch)], (rightStick + "/click").c_str());
     }
 
     void OpenXrInputBridge::AddGripValueBindings(
         std::vector<XrActionSuggestedBinding>& b,
         const char* gripValueName)
     {
-        const std::string rightGripValue = std::string("/user/hand/right/input/") + gripValueName;
-        AddBinding(b, m_FloatDigitalActions[Index(L4D2VROpenXrActionId::Flashlight)], rightGripValue.c_str());
+        // Touch grip is squeeze/value, not squeeze/click. Left grip reloads,
+        // right grip toggles the flashlight (the binding that worked before).
+        (void)gripValueName;
+        AddBinding(b, m_FloatDigitalActions[Index(L4D2VROpenXrActionId::Reload)], "/user/hand/left/input/squeeze/value");
+        AddBinding(b, m_FloatDigitalActions[Index(L4D2VROpenXrActionId::Flashlight)], "/user/hand/right/input/squeeze/value");
     }
 
     void OpenXrInputBridge::AddTouchFaceButtonBindings(std::vector<XrActionSuggestedBinding>& b)
     {
-        AddBinding(b, m_BooleanActions[Index(L4D2VROpenXrActionId::SecondaryAttack)], "/user/hand/right/input/b/click");
-        AddBinding(b, m_BooleanActions[Index(L4D2VROpenXrActionId::Reload)], "/user/hand/right/input/a/click");
-        AddBinding(b, m_BooleanActions[Index(L4D2VROpenXrActionId::MenuSelect)], "/user/hand/right/input/a/click");
+        // Match vrmod/SteamVRActionManifest/bindings_oculus_touch.json:
+        // left trigger = SecondaryAttack, right B = Use, right A = Jump/
+        // ActivateVR/MenuSelect, left X = Scoreboard, left Y = Pause.
+        AddBinding(b, m_FloatDigitalActions[Index(L4D2VROpenXrActionId::Use)], "/user/hand/right/input/b/click");
         AddBinding(b, m_BooleanActions[Index(L4D2VROpenXrActionId::MenuBack)], "/user/hand/right/input/b/click");
-        AddBinding(b, m_BooleanActions[Index(L4D2VROpenXrActionId::PrevItem)], "/user/hand/left/input/x/click");
+        AddBinding(b, m_BooleanActions[Index(L4D2VROpenXrActionId::Jump)], "/user/hand/right/input/a/click");
+        AddBinding(b, m_BooleanActions[Index(L4D2VROpenXrActionId::ActivateVR)], "/user/hand/right/input/a/click");
+        AddBinding(b, m_BooleanActions[Index(L4D2VROpenXrActionId::MenuSelect)], "/user/hand/right/input/a/click");
+        AddBinding(b, m_BooleanActions[Index(L4D2VROpenXrActionId::Scoreboard)], "/user/hand/left/input/x/click");
         AddBinding(b, m_BooleanActions[Index(L4D2VROpenXrActionId::Pause)], "/user/hand/left/input/y/click");
         // Quest OS often swallows menu. Pico uses system. Keep both as extras;
         // SuggestProfile drops any path the active profile does not expose.
@@ -5310,7 +5323,11 @@ float4 main(float4 position : SV_Position, float2 uv : TEXCOORD0) : SV_Target
             if (XR_SUCCEEDED(m_Xr->xrGetActionStateFloat(m_Session, &getInfo, &state)) && state.isActive)
             {
                 const float value = std::clamp(state.currentState, 0.0f, 1.0f);
-                const bool down = value >= def.threshold;
+                // Hysteresis keeps a grip hovering near the threshold from
+                // pulsing the digital action (the flashlight strobe).
+                const float releaseThreshold = (std::max)(0.05f, def.threshold - 0.12f);
+                const bool wasDown = m_FloatDigitalDown[i];
+                const bool down = wasDown ? (value > releaseThreshold) : (value >= def.threshold);
                 L4D2VROpenXrDigitalActionDesc& digital = outState.digitalActions[i];
                 const bool prevDown = digital.active && digital.state != 0;
                 const bool combined = prevDown || down;
@@ -5364,7 +5381,11 @@ float4 main(float4 position : SV_Position, float2 uv : TEXCOORD0) : SV_Target
     {
         const size_t i = Index(id);
         L4D2VROpenXrDigitalActionDesc& action = outState.digitalActions[i];
-        if (action.active)
+        // A real physical binding that is currently pressed wins. An action
+        // that merely reports isActive=false-state must still accept the
+        // synthesized Touch dpad, otherwise left-stick menu navigation and
+        // right-stick item switching never fire on profiles without dpad paths.
+        if (action.active && action.state != 0)
             return;
 
         action.active = 1;
@@ -5380,9 +5401,19 @@ float4 main(float4 position : SV_Position, float2 uv : TEXCOORD0) : SV_Target
         const L4D2VROpenXrAnalogActionDesc& turn = outState.analogActions[Index(L4D2VROpenXrActionId::Turn)];
         if (turn.active)
         {
-            // G2 SteamVR dpad: north=Jump, south=CrouchToggle. Do not steal
-            // this axis for weapon cycle (X/Y do that on Touch).
-            SetDerivedDigital(outState, L4D2VROpenXrActionId::Jump, turn.y > kPress);
+            if (CurrentControllerFamily() == L4D2VR_OPENXR_CONTROLLER_FAMILY_TOUCH)
+            {
+                // Touch has no thumbstick dpad paths; the manifest uses north/
+                // south for previous/next item. Jump is on right A.
+                SetDerivedDigital(outState, L4D2VROpenXrActionId::PrevItem, turn.y > kPress);
+                SetDerivedDigital(outState, L4D2VROpenXrActionId::NextItem, turn.y < -kPress);
+            }
+            else
+            {
+                // G2/Vive dpad: north=Jump, south=Crouch.
+                SetDerivedDigital(outState, L4D2VROpenXrActionId::Jump, turn.y > kPress);
+                SetDerivedDigital(outState, L4D2VROpenXrActionId::Crouch, turn.y < -kPress);
+            }
         }
 
         const L4D2VROpenXrAnalogActionDesc& walk = outState.analogActions[Index(L4D2VROpenXrActionId::Walk)];
