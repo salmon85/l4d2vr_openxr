@@ -20,6 +20,7 @@ namespace
 	};
 
 	thread_local HooksNekoPostProbeThreadState g_NekoPostProbeState{};
+	thread_local int g_VREyeSceneViewportActive = 0;
 	std::atomic<std::uint64_t> g_NekoPostProbeFrameSerial{ 0 };
 	std::atomic<unsigned int> g_NekoPostLumaProbeMask{ 0 };
 
@@ -2364,6 +2365,18 @@ void __fastcall Hooks::dDrawScreenSpaceRectangle(
 
 void __fastcall Hooks::dRenderView(void* ecx, void* edx, CViewSetup& setup, CViewSetup& hudViewSetup, int nClearFlags, int whatToDraw)
 {
+	{
+		static std::atomic<int> s_setupByteLogBudget{ 2 };
+		if (s_setupByteLogBudget.fetch_sub(1, std::memory_order_acq_rel) > 0)
+		{
+			const unsigned char* b = reinterpret_cast<const unsigned char*>(&setup);
+			char hex[3 * 48 + 1] = {};
+			for (int i = 0; i < 48; ++i)
+				std::snprintf(hex + i * 3, 4, "%02X ", b[0x60 + i]);
+			Game::logMsg("[VR][RenderViewBytes] size=%dx%d offset60=%s", setup.width, setup.height, hex);
+		}
+	}
+
 	// Source can call RenderView recursively while rendering the world, most visibly for water
 	// reflection/refraction render targets. The VR hook may only hijack the outer scene call.
 	// Nested calls must go straight through, otherwise water RTs can be filled with the VR eye
@@ -2532,6 +2545,27 @@ void __fastcall Hooks::dRenderView(void* ecx, void* edx, CViewSetup& setup, CVie
 			};
 
 			OriginalRenderViewScope scope(s_originalRenderViewDepth);
+			{
+				static std::atomic<int> s_viewSetupLogBudget{ 16 };
+				if (s_viewSetupLogBudget.fetch_sub(1, std::memory_order_acq_rel) > 0)
+				{
+					D3DVIEWPORT9 vp{};
+					IDirect3DDevice9* dev = nullptr;
+					if (g_D3DVR9)
+						g_D3DVR9->GetD3DDevice(&dev);
+					if (dev)
+					{
+						dev->GetViewport(&vp);
+						dev->Release();
+					}
+					Game::logMsg("[VR][RenderViewSetup] view=%d,%d %dx%d unscaled=%dx%d aspect=%.4f fov=%.2f zNear=%.2f vp=%d,%d %dx%d",
+						view.x, view.y, view.width, view.height,
+						view.m_nUnscaledWidth, view.m_nUnscaledHeight,
+						view.m_flAspectRatio, view.fov, view.zNear,
+						static_cast<int>(vp.X), static_cast<int>(vp.Y),
+						static_cast<int>(vp.Width), static_cast<int>(vp.Height));
+				}
+			}
 			hkRenderView.fOriginal(ecx, view, hud, clearFlags, drawFlags);
 		};
 
@@ -2959,7 +2993,7 @@ void __fastcall Hooks::dRenderView(void* ecx, void* edx, CViewSetup& setup, CVie
 	// snapshots are paced here before scene rendering so stale HMD poses do not enter the eye RTs.
 	uint32_t renderPoseTokenUsed = 0;
 	bool renderPoseAllowDuplicateSubmit = false;
-	vr::HmdMatrix34_t renderHmdPoseForSubmit{};
+	xr::HmdMatrix34_t renderHmdPoseForSubmit{};
 	bool renderHmdPoseForSubmitValid = false;
 	bool renderPoseUsesTrackingPrediction = false;
 	const auto renderHookStartTime = std::chrono::steady_clock::now();
@@ -3038,7 +3072,7 @@ void __fastcall Hooks::dRenderView(void* ecx, void* edx, CViewSetup& setup, CVie
 	bool firstPersonBodyQueuedPlayerSnapshotValid = false;
 	bool firstPersonBodyQueuedPlayerEligible = false;
 
-	if (queueMode != 0 && m_VR && m_VR->m_System && vr::VRCompositor())
+	if (queueMode != 0 && m_VR && m_VR->m_System && xr::VRCompositor())
 	{
 		// Remember which thread is producing render snapshots (used by other render-time hooks).
 		m_VR->m_RenderThreadId.store(static_cast<uint32_t>(GetCurrentThreadId()), std::memory_order_relaxed);
@@ -3560,7 +3594,7 @@ void __fastcall Hooks::dRenderView(void* ecx, void* edx, CViewSetup& setup, CVie
 
 		if (vpOk)
 		{
-			std::array<vr::TrackedDevicePose_t, vr::k_unMaxTrackedDeviceCount> renderPoses{};
+			std::array<xr::TrackedDevicePose_t, xr::k_unMaxTrackedDeviceCount> renderPoses{};
 
 			// In queued mode, avoid blocking on WaitGetPoses in the render hook.
 			// Prefer explicit non-blocking tracking prediction when requested; otherwise read the
@@ -3574,19 +3608,19 @@ void __fastcall Hooks::dRenderView(void* ecx, void* edx, CViewSetup& setup, CVie
 			bool havePoses = false;
 			if (useTrackingRenderPose)
 			{
-				const vr::ETrackingUniverseOrigin trackingOrigin = m_VR->GetCachedTrackingUniverseOrigin();
+				const xr::ETrackingUniverseOrigin trackingOrigin = m_VR->GetCachedTrackingUniverseOrigin();
 				float predicted = m_VR->SampleQueuedTrackingPredictionSeconds();
 				if (!(predicted >= 0.0f && predicted <= 0.5f))
 					predicted = 0.0f;
-				m_VR->m_System->GetDeviceToAbsoluteTrackingPose(trackingOrigin, predicted, renderPoses.data(), vr::k_unMaxTrackedDeviceCount);
-				havePoses = renderPoses[vr::k_unTrackedDeviceIndex_Hmd].bPoseIsValid;
+				m_VR->m_System->GetDeviceToAbsoluteTrackingPose(trackingOrigin, predicted, renderPoses.data(), xr::k_unMaxTrackedDeviceCount);
+				havePoses = renderPoses[xr::k_unTrackedDeviceIndex_Hmd].bPoseIsValid;
 				if (havePoses)
 				{
 					const uint32_t rawTrackingSeq = m_VR->m_QueuedRenderPoseFromTrackingSeq.fetch_add(1, std::memory_order_acq_rel) + 1;
 					poseSeq = 0x80000000u | (rawTrackingSeq & 0x7fffffffu);
 					renderPoseTokenUsed = poseSeq;
 					renderPoseUsesTrackingPrediction = true;
-					renderHmdPoseForSubmit = renderPoses[vr::k_unTrackedDeviceIndex_Hmd].mDeviceToAbsoluteTracking;
+					renderHmdPoseForSubmit = renderPoses[xr::k_unTrackedDeviceIndex_Hmd].mDeviceToAbsoluteTracking;
 					renderHmdPoseForSubmitValid = true;
 				}
 			}
@@ -3723,9 +3757,9 @@ void __fastcall Hooks::dRenderView(void* ecx, void* edx, CViewSetup& setup, CVie
 
 			// Heuristic: treat fast HMD rotation as "active" (helps decide whether to nudge pose waiting).
 			bool headTurningNow = false;
-			if (havePoses && renderPoses[vr::k_unTrackedDeviceIndex_Hmd].bPoseIsValid)
+			if (havePoses && renderPoses[xr::k_unTrackedDeviceIndex_Hmd].bPoseIsValid)
 			{
-				const auto& av = renderPoses[vr::k_unTrackedDeviceIndex_Hmd].vAngularVelocity;
+				const auto& av = renderPoses[xr::k_unTrackedDeviceIndex_Hmd].vAngularVelocity;
 				const double ax = (double)av.v[0];
 				const double ay = (double)av.v[1];
 				const double az = (double)av.v[2];
@@ -3952,19 +3986,19 @@ void __fastcall Hooks::dRenderView(void* ecx, void* edx, CViewSetup& setup, CVie
 			{
 				if (m_VR->m_System)
 				{
-					const vr::ETrackingUniverseOrigin trackingOrigin = m_VR->GetCachedTrackingUniverseOrigin();
+					const xr::ETrackingUniverseOrigin trackingOrigin = m_VR->GetCachedTrackingUniverseOrigin();
 					float predicted = m_VR->SampleQueuedTrackingPredictionSeconds();
 					if (!(predicted >= 0.0f && predicted <= 0.5f))
 						predicted = 0.0f;
-					m_VR->m_System->GetDeviceToAbsoluteTrackingPose(trackingOrigin, predicted, renderPoses.data(), vr::k_unMaxTrackedDeviceCount);
+					m_VR->m_System->GetDeviceToAbsoluteTrackingPose(trackingOrigin, predicted, renderPoses.data(), xr::k_unMaxTrackedDeviceCount);
 				}
 				renderPoseTokenUsed = m_VR->m_PoseWaiterSeq.load(std::memory_order_acquire);
 			}
 
-			if (renderPoses[vr::k_unTrackedDeviceIndex_Hmd].bPoseIsValid)
+			if (renderPoses[xr::k_unTrackedDeviceIndex_Hmd].bPoseIsValid)
 			{
 				TrackedDevicePoseData hmdPose{};
-				m_VR->GetPoseData(renderPoses[vr::k_unTrackedDeviceIndex_Hmd], hmdPose);
+				m_VR->GetPoseData(renderPoses[xr::k_unTrackedDeviceIndex_Hmd], hmdPose);
 				QAngle hmdAngLocal = hmdPose.TrackedDeviceAng;
 				Vector hmdPosLocal = hmdPose.TrackedDevicePos;
 
@@ -4075,8 +4109,8 @@ void __fastcall Hooks::dRenderView(void* ecx, void* edx, CViewSetup& setup, CVie
 				Vector viewRight = viewCenter + (hmdRight * (+(ipdSu * 0.5f)));
 
 				// Controllers + viewmodel (visual only, no gameplay auto-aim overrides here).
-				vr::TrackedDeviceIndex_t leftIdx = m_VR->m_System->GetTrackedDeviceIndexForControllerRole(vr::TrackedControllerRole_LeftHand);
-				vr::TrackedDeviceIndex_t rightIdx = m_VR->m_System->GetTrackedDeviceIndexForControllerRole(vr::TrackedControllerRole_RightHand);
+				xr::TrackedDeviceIndex_t leftIdx = m_VR->m_System->GetTrackedDeviceIndexForControllerRole(xr::TrackedControllerRole_LeftHand);
+				xr::TrackedDeviceIndex_t rightIdx = m_VR->m_System->GetTrackedDeviceIndexForControllerRole(xr::TrackedControllerRole_RightHand);
 				if (m_VR->m_LeftHanded)
 				{
 					std::swap(leftIdx, rightIdx);
@@ -4101,12 +4135,12 @@ void __fastcall Hooks::dRenderView(void* ecx, void* edx, CViewSetup& setup, CVie
 					VectorNormalize(rightCtrlRight) != 0.0f &&
 					VectorNormalize(rightCtrlUp) != 0.0f;
 
-				auto buildRenderControllerBasis = [&](const vr::TrackedDevicePose_t& pose, Vector& posLocal, Vector& ctrlF, Vector& ctrlR, Vector& ctrlU) -> bool
+				auto buildRenderControllerBasis = [&](const xr::TrackedDevicePose_t& pose, Vector& posLocal, Vector& ctrlF, Vector& ctrlR, Vector& ctrlU) -> bool
 					{
 						if (!pose.bPoseIsValid)
 							return false;
 
-						const vr::HmdMatrix34_t& mat = pose.mDeviceToAbsoluteTracking;
+						const xr::HmdMatrix34_t& mat = pose.mDeviceToAbsoluteTracking;
 						posLocal.x = -mat.m[2][3];
 						posLocal.y = -mat.m[0][3];
 						posLocal.z = mat.m[1][3];
@@ -4133,7 +4167,7 @@ void __fastcall Hooks::dRenderView(void* ecx, void* edx, CViewSetup& setup, CVie
 						return true;
 					};
 
-				if (leftIdx != vr::k_unTrackedDeviceIndexInvalid && leftIdx < vr::k_unMaxTrackedDeviceCount && renderPoses[leftIdx].bPoseIsValid)
+				if (leftIdx != xr::k_unTrackedDeviceIndexInvalid && leftIdx < xr::k_unMaxTrackedDeviceCount && renderPoses[leftIdx].bPoseIsValid)
 				{
 					Vector ctrlPosLocal{}, ctrlF{}, ctrlR{}, ctrlU{};
 					if (buildRenderControllerBasis(renderPoses[leftIdx], ctrlPosLocal, ctrlF, ctrlR, ctrlU))
@@ -4150,7 +4184,7 @@ void __fastcall Hooks::dRenderView(void* ecx, void* edx, CViewSetup& setup, CVie
 					}
 				}
 
-				if (rightIdx != vr::k_unTrackedDeviceIndexInvalid && rightIdx < vr::k_unMaxTrackedDeviceCount && renderPoses[rightIdx].bPoseIsValid)
+				if (rightIdx != xr::k_unTrackedDeviceIndexInvalid && rightIdx < xr::k_unMaxTrackedDeviceCount && renderPoses[rightIdx].bPoseIsValid)
 				{
 					Vector ctrlPosLocal{}, ctrlF{}, ctrlR{}, ctrlU{};
 					if (buildRenderControllerBasis(renderPoses[rightIdx], ctrlPosLocal, ctrlF, ctrlR, ctrlU))
@@ -4749,27 +4783,38 @@ void __fastcall Hooks::dRenderView(void* ecx, void* edx, CViewSetup& setup, CVie
 	CViewSetup leftEyeView = setup;
 	CViewSetup rightEyeView = setup;
 
-	auto NormalizeViewSetupForVREye = [&](CViewSetup& view)
+	auto NormalizeViewSetupForVREye = [&](CViewSetup& view, int renderWidth, int renderHeight)
 		{
 			const int eyeWidth = static_cast<int>(m_VR->m_RenderWidth);
 			const int eyeHeight = static_cast<int>(m_VR->m_RenderHeight);
+			if (renderWidth <= 0)
+				renderWidth = eyeWidth;
+			if (renderHeight <= 0)
+				renderHeight = eyeHeight;
 
 			// Source keeps both scaled and unscaled viewport fields in CViewSetup.
-			// If the unscaled fields are left at the desktop/backbuffer size,
-			// queued rendering can intermittently render an eye RT through a desktop-sized
-			// viewport after VGUI/HUD capture or a resolution switch. That shows up as
-			// flicker/misalignment once the desktop mirror is larger than 1080p.
+			// The stereo scene is rendered at the native client size, then scaled
+			// into the full eye target; the projection still uses the HMD eye
+			// aspect so the scale into the portrait eye is geometrically correct.
 			view.x = 0;
 			view.y = 0;
 			view.m_nUnscaledX = 0;
 			view.m_nUnscaledY = 0;
-			view.width = eyeWidth;
-			view.height = eyeHeight;
-			view.m_nUnscaledWidth = eyeWidth;
-			view.m_nUnscaledHeight = eyeHeight;
+			view.width = renderWidth;
+			view.height = renderHeight;
+			view.m_nUnscaledWidth = renderWidth;
+			view.m_nUnscaledHeight = renderHeight;
 			view.fov = m_VR->m_Fov;
 			view.fovViewmodel = m_VR->m_Fov;
-			view.m_flAspectRatio = m_VR->m_Aspect;
+			// Match the projection to the eye aspect, not the native intermediate
+			// size. The final StretchRect restores the portrait aspect.
+			view.m_flAspectRatio = (eyeHeight > 0)
+				? (static_cast<float>(eyeWidth) / static_cast<float>(eyeHeight))
+				: m_VR->m_Aspect;
+			// Clear the CViewSetup ortho/legacy flag block.  The engine's desktop
+			// setup can carry m_bRenderToSubrectOfLargerScreen, which makes
+			// RenderView draw a 16:9 subrect at the top of the portrait eye RT.
+			std::memset(reinterpret_cast<unsigned char*>(&view) + 0x20, 0, 0x14);
 			// Preserve the original VR projection verbatim at ordinary distances.
 			view.zNear = 6;
 			// Entity proximity is sampled on the update thread. RenderView may run on
@@ -4793,8 +4838,15 @@ void __fastcall Hooks::dRenderView(void* ecx, void* edx, CViewSetup& setup, CVie
 			view.zFarViewmodel = view.zFar;
 		};
 
-	NormalizeViewSetupForVREye(leftEyeView);
-	NormalizeViewSetupForVREye(rightEyeView);
+	int eyeSceneWidth = static_cast<int>(m_VR->m_EyeSceneWidth);
+	int eyeSceneHeight = static_cast<int>(m_VR->m_EyeSceneHeight);
+	if (eyeSceneWidth <= 0 || eyeSceneHeight <= 0)
+	{
+		eyeSceneWidth = (setup.width > 0) ? setup.width : static_cast<int>(m_VR->m_RenderWidth);
+		eyeSceneHeight = (setup.height > 0) ? setup.height : static_cast<int>(m_VR->m_RenderHeight);
+	}
+	NormalizeViewSetupForVREye(leftEyeView, eyeSceneWidth, eyeSceneHeight);
+	NormalizeViewSetupForVREye(rightEyeView, eyeSceneWidth, eyeSceneHeight);
 	// Keep VR tracking base tied to the real player eye, NOT the shoulder camera.
 	// IMPORTANT (VR compatibility):
 	// Some VScript mods (e.g. slide mods) temporarily enable point_viewcontrol_survivor via
@@ -5204,14 +5256,14 @@ void __fastcall Hooks::dRenderView(void* ecx, void* edx, CViewSetup& setup, CVie
 	// Align HUD view to the same origin/angles; otherwise you can get a second layer that
 	// appears to "follow the controller / stick" (classic double-image artifact).
 	CViewSetup hudLeft = hudViewSetup;
-	NormalizeViewSetupForVREye(hudLeft);
+	NormalizeViewSetupForVREye(hudLeft, eyeSceneWidth, eyeSceneHeight);
 	hudLeft.origin = leftEyeView.origin;
 	hudLeft.angles = renderViewAngles;
 
 	rightEyeView.origin = rightOrigin;
 	rightEyeView.angles = renderViewAngles;
 	CViewSetup hudRight = hudViewSetup;
-	NormalizeViewSetupForVREye(hudRight);
+	NormalizeViewSetupForVREye(hudRight, eyeSceneWidth, eyeSceneHeight);
 	hudRight.origin = rightEyeView.origin;
 	hudRight.angles = renderViewAngles;
 
@@ -5223,9 +5275,23 @@ void __fastcall Hooks::dRenderView(void* ecx, void* edx, CViewSetup& setup, CVie
 		(leftEyeView.origin.y + rightEyeView.origin.y) * 0.5f,
 		(leftEyeView.origin.z + rightEyeView.origin.z) * 0.5f);
 
-	auto renderEyeScene = [&](int eyeIndex, ITexture* eyeTexture,
+	auto renderEyeScene = [&](int eyeIndex, ITexture* sceneTexture, ITexture* eyeTexture,
 		CViewSetup& eyeView, CViewSetup& eyeHud, bool drawPreViewLaser)
 		{
+			struct EyeSceneViewportScope
+			{
+				int previous = 0;
+				explicit EyeSceneViewportScope(int eye)
+				{
+					previous = g_VREyeSceneViewportActive;
+					g_VREyeSceneViewportActive = eye;
+				}
+				~EyeSceneViewportScope()
+				{
+					g_VREyeSceneViewportActive = previous;
+				}
+			} eyeSceneViewportScope(eyeIndex);
+
 			struct EyeRenderTargetScope
 			{
 				IMatRenderContext* ctx = nullptr;
@@ -5311,9 +5377,9 @@ void __fastcall Hooks::dRenderView(void* ecx, void* edx, CViewSetup& setup, CVie
 
 			EyeRenderTargetScope eyeRtScope(
 				rndrContext,
-				eyeTexture,
-				static_cast<int>(m_VR->m_RenderWidth),
-				static_cast<int>(m_VR->m_RenderHeight));
+				sceneTexture,
+				eyeSceneWidth,
+				eyeSceneHeight);
 			EyeSharedCenterScope sharedCenterScope(
 				s_vrEyeRenderPass,
 				s_vrSharedCenterValid,
@@ -5420,8 +5486,64 @@ void __fastcall Hooks::dRenderView(void* ecx, void* edx, CViewSetup& setup, CVie
 				callOriginalRenderView(eyeView, eyeHud, nClearFlags, whatToDraw);
 			}
 
+			{
+				static std::atomic<int> s_eyeViewportLogBudget{ 16 };
+				if (s_eyeViewportLogBudget.fetch_sub(1, std::memory_order_acq_rel) > 0)
+				{
+					D3DVIEWPORT9 vp{};
+					IDirect3DDevice9* dev = nullptr;
+					if (g_D3DVR9)
+						g_D3DVR9->GetD3DDevice(&dev);
+					if (dev)
+					{
+						dev->GetViewport(&vp);
+						dev->Release();
+					}
+					const int* raw = reinterpret_cast<const int*>(&eyeView);
+					Game::logMsg("[VR][EyeRenderViewport] eye=%d vp=%d,%d %dx%d setup=%dx%d raw18=%d raw1C=%d raw20=%d raw24=%d aspect=%.4f",
+						eyeIndex,
+						static_cast<int>(vp.X), static_cast<int>(vp.Y),
+						static_cast<int>(vp.Width), static_cast<int>(vp.Height),
+						eyeView.width, eyeView.height,
+						raw[6], raw[7], raw[8], raw[9],
+						eyeView.m_flAspectRatio);
+				}
+			}
+
 			if (m_VR->m_IsVREnabled)
 				m_VR->FinishVrHandsEyeRender();
+
+			// Black Mesa VR's working path: the scene was rendered at the native
+			// client size; scale the completed frame into the full HMD eye target.
+			if (m_VR->m_IsVREnabled && sceneTexture && eyeTexture)
+			{
+				IDirect3DSurface9* src = (eyeIndex == 1)
+					? m_VR->m_D9LeftEyeSceneSurface
+					: m_VR->m_D9RightEyeSceneSurface;
+				IDirect3DSurface9* dst = (eyeIndex == 1)
+					? m_VR->m_D9LeftEyeSurface
+					: m_VR->m_D9RightEyeSurface;
+				if (src && dst)
+				{
+					IDirect3DDevice9* device = nullptr;
+					if (g_D3DVR9)
+						g_D3DVR9->GetD3DDevice(&device);
+					if (device)
+					{
+						const HRESULT hr = device->StretchRect(
+							src, nullptr, dst, nullptr, D3DTEXF_LINEAR);
+						static std::atomic<int> s_eyeSceneBlitLogBudget{ 8 };
+						if (s_eyeSceneBlitLogBudget.fetch_sub(1, std::memory_order_relaxed) > 0)
+						{
+							Game::logMsg("[VR][EyeSceneBlit] eye=%d %dx%d -> %ux%u hr=0x%08lX",
+								eyeIndex, eyeSceneWidth, eyeSceneHeight,
+								m_VR->m_RenderWidth, m_VR->m_RenderHeight,
+								static_cast<unsigned long>(hr));
+						}
+						device->Release();
+					}
+				}
+			}
 		};
 
 	auto drawPostEyeWork = [&](int eyeIndex, ITexture* eyeTexture, CViewSetup& eyeView)
@@ -5488,7 +5610,7 @@ void __fastcall Hooks::dRenderView(void* ecx, void* edx, CViewSetup& setup, CVie
 	// can never be replayed across rendered frames.
 	HooksWorldPoseBeginStereoFrame();
 	{
-		renderEyeScene(1, m_VR->m_LeftEyeTexture, leftEyeView, hudLeft, true);
+		renderEyeScene(1, m_VR->m_LeftEyeSceneTexture, m_VR->m_LeftEyeTexture, leftEyeView, hudLeft, true);
 		if (desktopMirrorHidePluginOverlaysSingleCopyActive && m_VR->m_DesktopMirrorEye == 0)
 			m_VR->CopyEyeToDesktopMirrorTexture(0);
 		if (copyRightEyeFromLeft)
@@ -5500,7 +5622,7 @@ void __fastcall Hooks::dRenderView(void* ecx, void* edx, CViewSetup& setup, CVie
 	{
 		if (!rightEyeCopiedFromLeft)
 		{
-			renderEyeScene(2, m_VR->m_RightEyeTexture, rightEyeView, hudRight, false);
+			renderEyeScene(2, m_VR->m_RightEyeSceneTexture, m_VR->m_RightEyeTexture, rightEyeView, hudRight, false);
 		}
 		if (desktopMirrorHidePluginOverlaysSingleCopyActive && m_VR->m_DesktopMirrorEye != 0)
 			m_VR->CopyEyeToDesktopMirrorTexture(1);

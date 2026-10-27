@@ -71,6 +71,20 @@ namespace dxvk {
             return ((color >> 24) & 0xFFu) != 0u;
         }
 
+        // True for the game-side eye render targets that must always be treated
+        // as full-surface views.  Source keeps its own window-sized viewport
+        // around and can re-apply it while rendering the VR eye scene.
+        static bool VrIsEyeSurface(IDirect3DSurface9* pSurface) {
+            if (pSurface == nullptr || g_Game == nullptr || g_Game->m_VR == nullptr)
+                return false;
+
+            VR* vr = g_Game->m_VR;
+            return pSurface == vr->m_D9LeftEyeSurface
+                || pSurface == vr->m_D9RightEyeSurface
+                || pSurface == vr->m_D9LeftEyeSubmitSurface
+                || pSurface == vr->m_D9RightEyeSubmitSurface;
+        }
+
 
         static bool VrForceSwapchainBackBufferToEyeSize(
             VR* vr,
@@ -802,7 +816,7 @@ namespace dxvk {
     }
 
     static bool VrGetReShadeDepthRegion(
-            const vr::VRTextureBounds_t& bounds,
+            const xr::VRTextureBounds_t& bounds,
             const VkExtent3D&             imageExtent,
                   VkOffset3D&             offset,
                   VkExtent3D&             extent) {
@@ -1037,6 +1051,174 @@ namespace dxvk {
         const bool manageScene = !m_flags.test(D3D9DeviceFlag::InScene);
         VrItemModelLabelDrawOverlaysToSubmitTargets(this, vr, manageScene);
         VrAimLineDrawOverlaysToSubmitTargets(this, vr, manageScene);
+    }
+
+    namespace {
+        VkFormat VRBlitSrgbViewFormat(VkFormat format) {
+            switch (format) {
+            case VK_FORMAT_B8G8R8A8_UNORM: return VK_FORMAT_B8G8R8A8_SRGB;
+            case VK_FORMAT_R8G8B8A8_UNORM: return VK_FORMAT_R8G8B8A8_SRGB;
+            case VK_FORMAT_A8B8G8R8_UNORM_PACK32: return VK_FORMAT_A8B8G8R8_SRGB_PACK32;
+            case VK_FORMAT_B8G8R8_UNORM: return VK_FORMAT_B8G8R8_SRGB;
+            case VK_FORMAT_R8G8B8_UNORM: return VK_FORMAT_R8G8B8_SRGB;
+            default: return format;
+            }
+        }
+
+        template <typename T>
+        T VRBlitHandleFromU64(uint64_t value) {
+            static_assert(sizeof(T) == sizeof(uint64_t), "Vulkan handle is not 64-bit");
+            T out = { };
+            std::memcpy(&out, &value, sizeof(out));
+            return out;
+        }
+
+        bool VRBlitIsSrgbFormat(VkFormat format) {
+            switch (format) {
+            case VK_FORMAT_B8G8R8A8_SRGB:
+            case VK_FORMAT_R8G8B8A8_SRGB:
+            case VK_FORMAT_A8B8G8R8_SRGB_PACK32:
+            case VK_FORMAT_B8G8R8_SRGB:
+            case VK_FORMAT_R8G8B8_SRGB:
+                return true;
+            default:
+                return false;
+            }
+        }
+    }
+
+    void D3D9DeviceEx::BlitImages(const D3D9_VR_BLIT_DESC* pDescs, uint32_t unDescCount) {
+        if (!pDescs || !unDescCount)
+            return;
+
+        struct BlitResources {
+            Rc<DxvkImage>     srcImage;
+            Rc<DxvkImageView> srcView;
+            Rc<DxvkImage>     dstImage;
+            Rc<DxvkImageView> dstView;
+            VkOffset3D        srcOffsets[2] = { };
+            VkOffset3D        dstOffsets[2] = { };
+        };
+
+        std::vector<BlitResources> jobs;
+        jobs.reserve(unDescCount);
+        const Rc<DxvkDevice> device = GetDXVKDevice();
+
+        for (uint32_t i = 0; i < unDescCount; ++i) {
+            const D3D9_VR_BLIT_DESC& job = pDescs[i];
+            if (!job.SrcImage || !job.DstImage || !job.SrcWidth || !job.SrcHeight ||
+                !job.DstWidth || !job.DstHeight || job.SrcFormat == VK_FORMAT_UNDEFINED ||
+                job.DstFormat == VK_FORMAT_UNDEFINED)
+                continue;
+
+            DxvkImageCreateInfo srcInfo = { };
+            srcInfo.type        = VK_IMAGE_TYPE_2D;
+            srcInfo.format      = job.SrcFormat;
+            srcInfo.extent      = { job.SrcWidth, job.SrcHeight, 1u };
+            srcInfo.numLayers   = 1u;
+            srcInfo.mipLevels   = 1u;
+            srcInfo.sampleCount = VK_SAMPLE_COUNT_1_BIT;
+            srcInfo.usage       = job.SrcUsage | VK_IMAGE_USAGE_SAMPLED_BIT;
+            srcInfo.stages      = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT;
+            srcInfo.access      = VK_ACCESS_2_SHADER_READ_BIT;
+            srcInfo.tiling      = VK_IMAGE_TILING_OPTIMAL;
+            srcInfo.layout      = job.SrcLayout;
+
+            // D3D9 RTs hold sRGB-encoded bytes.  When the OpenXR swapchain is
+            // sRGB, sample a mutable sRGB view so the framebuffer blit decodes
+            // and re-encodes to the same visible colour while the compositor
+            // receives valid sRGB data.
+            VkFormat srcViewFormat = job.SrcFormat;
+            VkFormat srgbFormat = VRBlitSrgbViewFormat(job.SrcFormat);
+            if (srgbFormat != job.SrcFormat && VRBlitIsSrgbFormat(job.DstFormat)) {
+                srcInfo.viewFormatCount = 1u;
+                srcInfo.viewFormats = &srgbFormat;
+                srcViewFormat = srgbFormat;
+            }
+
+            DxvkImageCreateInfo dstInfo = { };
+            dstInfo.type        = VK_IMAGE_TYPE_2D;
+            dstInfo.format      = job.DstFormat;
+            dstInfo.extent      = { job.DstWidth, job.DstHeight, 1u };
+            dstInfo.numLayers   = 1u;
+            dstInfo.mipLevels   = 1u;
+            dstInfo.sampleCount = VK_SAMPLE_COUNT_1_BIT;
+            dstInfo.usage       = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
+                                  VK_IMAGE_USAGE_TRANSFER_DST_BIT |
+                                  VK_IMAGE_USAGE_SAMPLED_BIT;
+            dstInfo.stages      = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
+            dstInfo.access      = VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT |
+                                  VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT;
+            dstInfo.tiling      = VK_IMAGE_TILING_OPTIMAL;
+            dstInfo.layout      = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
+            BlitResources resources;
+            resources.srcImage = device->importImage(srcInfo,
+                VRBlitHandleFromU64<VkImage>(job.SrcImage), 0u);
+            resources.dstImage = device->importImage(dstInfo,
+                VRBlitHandleFromU64<VkImage>(job.DstImage), 0u);
+            if (!resources.srcImage || !resources.dstImage)
+                continue;
+
+            DxvkImageViewKey srcKey = { };
+            srcKey.viewType = VK_IMAGE_VIEW_TYPE_2D;
+            srcKey.usage = VK_IMAGE_USAGE_SAMPLED_BIT;
+            srcKey.format = srcViewFormat;
+            srcKey.aspects = VK_IMAGE_ASPECT_COLOR_BIT;
+            srcKey.mipCount = 1u;
+            srcKey.layerCount = 1u;
+            resources.srcView = resources.srcImage->createView(srcKey);
+            if (!resources.srcView) {
+                srcKey.format = job.SrcFormat;
+                resources.srcView = resources.srcImage->createView(srcKey);
+            }
+
+            DxvkImageViewKey dstKey = { };
+            dstKey.viewType = VK_IMAGE_VIEW_TYPE_2D;
+            dstKey.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+            dstKey.format = job.DstFormat;
+            dstKey.aspects = VK_IMAGE_ASPECT_COLOR_BIT;
+            dstKey.mipCount = 1u;
+            dstKey.layerCount = 1u;
+            resources.dstView = resources.dstImage->createView(dstKey);
+            if (!resources.srcView || !resources.dstView)
+                continue;
+
+            float u0 = std::clamp((std::min)(job.SrcU0, job.SrcU1), 0.0f, 1.0f);
+            float u1 = std::clamp((std::max)(job.SrcU0, job.SrcU1), 0.0f, 1.0f);
+            float v0 = std::clamp((std::min)(job.SrcV0, job.SrcV1), 0.0f, 1.0f);
+            float v1 = std::clamp((std::max)(job.SrcV0, job.SrcV1), 0.0f, 1.0f);
+
+            int32_t x0 = static_cast<int32_t>(std::lround(u0 * float(job.SrcWidth)));
+            int32_t x1 = static_cast<int32_t>(std::lround(u1 * float(job.SrcWidth)));
+            int32_t y0 = static_cast<int32_t>(std::lround(v0 * float(job.SrcHeight)));
+            int32_t y1 = static_cast<int32_t>(std::lround(v1 * float(job.SrcHeight)));
+            x0 = std::clamp(x0, 0, int32_t(job.SrcWidth) - 1);
+            y0 = std::clamp(y0, 0, int32_t(job.SrcHeight) - 1);
+            x1 = std::clamp(x1, x0 + 1, int32_t(job.SrcWidth));
+            y1 = std::clamp(y1, y0 + 1, int32_t(job.SrcHeight));
+
+            resources.srcOffsets[0] = { x0, y0, 0 };
+            resources.srcOffsets[1] = { x1, y1, 1 };
+            resources.dstOffsets[0] = { 0, 0, 0 };
+            resources.dstOffsets[1] = { int32_t(job.DstWidth), int32_t(job.DstHeight), 1 };
+
+            jobs.push_back(std::move(resources));
+        }
+
+        if (jobs.empty())
+            return;
+
+        EmitCs([jobs = std::move(jobs)](DxvkContext* ctx) {
+            for (const BlitResources& job : jobs) {
+                ctx->blitImageView(job.dstView, job.dstOffsets,
+                    job.srcView, job.srcOffsets, VK_FILTER_LINEAR);
+            }
+        });
+
+        Flush();
+        SynchronizeCsThread(DxvkCsThread::SynchronizeAll);
+        device->waitForIdle();
     }
 
     D3D9DeviceEx::D3D9DeviceEx(
@@ -1704,7 +1886,28 @@ namespace dxvk {
             if (pSharedHandle != nullptr && Pool != D3DPOOL_DEFAULT)
                 return D3DERR_INVALIDCALL;
 
-            const Com<D3D9Texture2D> texture = new D3D9Texture2D(this, &desc, IsExtended(), pSharedHandle);
+            // The x64 OpenXR helper imports these as KMT shared images.  Only
+            // eye/HUD textures need a shareable allocation, and only in the
+            // helper backend; everything else stays on the normal path.
+            HANDLE openXrSharedHandle = nullptr;
+            HANDLE* effectiveSharedHandle = pSharedHandle;
+            if (pSharedHandle == nullptr && Pool == D3DPOOL_DEFAULT &&
+                g_Game && g_Game->m_VR && g_Game->m_VR->m_OpenXrHelperBridgeActive) {
+                const VR::TextureID texID = g_Game->m_VR->m_CreatingTextureID;
+                const bool singleSample = desc.MultiSample == D3DMULTISAMPLE_NONE;
+                if (singleSample &&
+                    (texID == VR::Texture_LeftEye ||
+                     texID == VR::Texture_RightEye ||
+                     texID == VR::Texture_LeftEyeSubmit ||
+                     texID == VR::Texture_RightEyeSubmit ||
+                     texID == VR::Texture_HUD ||
+                     texID == VR::Texture_Menu ||
+                     texID == VR::Texture_Blank)) {
+                    effectiveSharedHandle = &openXrSharedHandle;
+                }
+            }
+
+            const Com<D3D9Texture2D> texture = new D3D9Texture2D(this, &desc, IsExtended(), effectiveSharedHandle);
 
             m_initializer->InitTexture(texture->GetCommonTexture(), initialData);
             *ppTexture = texture.ref();
@@ -1739,6 +1942,13 @@ namespace dxvk {
                     texture.ref()->GetSurfaceLevel(0, &g_Game->m_VR->m_D9RightEyeSubmitSurface);
                     vrDescResult = g_D3DVR9->GetVRDesc(g_Game->m_VR->m_D9RightEyeSubmitSurface, &texDesc);
                 }
+                else if (texID == VR::Texture_LeftEyeScene) {
+                    // Native-sized intermediate for the eye scene. Never shared.
+                    texture.ref()->GetSurfaceLevel(0, &g_Game->m_VR->m_D9LeftEyeSceneSurface);
+                }
+                else if (texID == VR::Texture_RightEyeScene) {
+                    texture.ref()->GetSurfaceLevel(0, &g_Game->m_VR->m_D9RightEyeSceneSurface);
+                }
                 else if (texID == VR::Texture_NekoPostLinearInput) {
                     // Private D3D9 scratch RT: never register a Vulkan/OpenVR handle.
                     texture.ref()->GetSurfaceLevel(0, &g_Game->m_VR->m_D9NekoPostLinearInputSurface);
@@ -1751,6 +1961,11 @@ namespace dxvk {
                     textureTarget = &g_Game->m_VR->m_VKHUD;
                     texture.ref()->GetSurfaceLevel(0, &g_Game->m_VR->m_D9HUDSurface);
                     vrDescResult = g_D3DVR9->GetVRDesc(g_Game->m_VR->m_D9HUDSurface, &texDesc);
+                }
+                else if (texID == VR::Texture_Menu) {
+                    textureTarget = &g_Game->m_VR->m_VKMenu;
+                    texture.ref()->GetSurfaceLevel(0, &g_Game->m_VR->m_D9MenuSurface);
+                    vrDescResult = g_D3DVR9->GetVRDesc(g_Game->m_VR->m_D9MenuSurface, &texDesc);
                 }
                 else if (texID == VR::Texture_Scope) {
                     textureTarget = &g_Game->m_VR->m_VKScope;
@@ -1772,10 +1987,10 @@ namespace dxvk {
                 }
 
                 if (textureTarget != nullptr && SUCCEEDED(vrDescResult)) {
-                    std::memcpy(&textureTarget->m_VulkanData, &texDesc, sizeof(vr::VRVulkanTextureData_t));
+                    std::memcpy(&textureTarget->m_VulkanData, &texDesc, sizeof(xr::VRVulkanTextureData_t));
                     textureTarget->m_VRTexture.handle = &textureTarget->m_VulkanData;
-                    textureTarget->m_VRTexture.eColorSpace = vr::ColorSpace_Auto;
-                    textureTarget->m_VRTexture.eType = vr::TextureType_Vulkan;
+                    textureTarget->m_VRTexture.eColorSpace = xr::ColorSpace_Auto;
+                    textureTarget->m_VRTexture.eType = xr::TextureType_Vulkan;
                 }
             }
 
@@ -2971,6 +3186,39 @@ namespace dxvk {
         bool srgb = m_state.renderStates[D3DRS_SRGBWRITEENABLE];
         bool scissor = m_state.renderStates[D3DRS_SCISSORTESTENABLE];
 
+        if (g_Game && g_Game->m_VR && m_state.renderTargets[0] != nullptr) {
+            IDirect3DSurface9* currentRt =
+                static_cast<IDirect3DSurface9*>(m_state.renderTargets[0].ptr());
+
+            if (VrIsEyeSurface(currentRt)) {
+                static std::atomic<int> s_eyeClearLogBudget{ 32 };
+                if (s_eyeClearLogBudget.fetch_sub(1, std::memory_order_relaxed) > 0) {
+                    const VkExtent2D rtSize = m_state.renderTargets[0]->GetSurfaceExtent();
+                    VkExtent2D dsSize = { 0u, 0u };
+                    if (m_state.depthStencil != nullptr)
+                        dsSize = m_state.depthStencil->GetSurfaceExtent();
+
+                    LONG rx1 = 0, ry1 = 0, rx2 = 0, ry2 = 0;
+                    if (Count != 0 && pRects != nullptr) {
+                        rx1 = pRects[0].x1; ry1 = pRects[0].y1;
+                        rx2 = pRects[0].x2; ry2 = pRects[0].y2;
+                    }
+
+                    Game::logMsg("[VR][D3D9Clear] rt=%ux%u ds=%ux%u vp=%u,%u %ux%u sc=%ld,%ld,%ld,%ld scEn=%d count=%lu rect0=%ld,%ld,%ld,%ld flags=0x%lx",
+                        rtSize.width, rtSize.height, dsSize.width, dsSize.height,
+                        static_cast<unsigned>(vp.X), static_cast<unsigned>(vp.Y),
+                        static_cast<unsigned>(vp.Width), static_cast<unsigned>(vp.Height),
+                        static_cast<long>(sc.left), static_cast<long>(sc.top),
+                        static_cast<long>(sc.right), static_cast<long>(sc.bottom),
+                        scissor ? 1 : 0,
+                        static_cast<unsigned long>(Count),
+                        static_cast<long>(rx1), static_cast<long>(ry1),
+                        static_cast<long>(rx2), static_cast<long>(ry2),
+                        static_cast<unsigned long>(Flags));
+                }
+            }
+        }
+
         VkOffset3D offset = { int32_t(vp.X),    int32_t(vp.Y),      0 };
         VkExtent3D extent = { vp.Width,         vp.Height,  1u };
 
@@ -3208,6 +3456,36 @@ namespace dxvk {
                     effectiveViewport.Y = 0;
                     effectiveViewport.Width = width;
                     effectiveViewport.Height = height;
+                }
+            }
+        }
+
+        // Single-threaded mode (mat_queue_mode 0) does not take the branch above,
+        // but Source can still apply the 1920x1080 window viewport to the larger
+        // stereo eye target.  Force the eye surfaces to their full size so the
+        // scene is not rendered into a small top-left subrect.
+        if (g_Game && g_Game->m_VR && m_state.renderTargets[0] != nullptr) {
+            IDirect3DSurface9* currentRt =
+                static_cast<IDirect3DSurface9*>(m_state.renderTargets[0].ptr());
+            const VkExtent2D rtSize = m_state.renderTargets[0]->GetSurfaceExtent();
+
+            if (VrIsEyeSurface(currentRt) && rtSize.width != 0 && rtSize.height != 0) {
+                if (effectiveViewport.X != 0 || effectiveViewport.Y != 0 ||
+                    effectiveViewport.Width != rtSize.width ||
+                    effectiveViewport.Height != rtSize.height) {
+                    static std::atomic<int> s_eyeViewportLogBudget{ 120 };
+                    if (s_eyeViewportLogBudget.fetch_sub(1, std::memory_order_relaxed) > 0) {
+                        Game::logMsg("[VR][D3D9EyeViewport] rt=%ux%u req=%u,%u %ux%u -> 0,0 %ux%u",
+                            rtSize.width, rtSize.height,
+                            effectiveViewport.X, effectiveViewport.Y,
+                            effectiveViewport.Width, effectiveViewport.Height,
+                            rtSize.width, rtSize.height);
+                    }
+
+                    effectiveViewport.X = 0;
+                    effectiveViewport.Y = 0;
+                    effectiveViewport.Width = rtSize.width;
+                    effectiveViewport.Height = rtSize.height;
                 }
             }
         }
@@ -3960,13 +4238,43 @@ namespace dxvk {
         if (unlikely(pRect == nullptr))
             return D3DERR_INVALIDCALL;
 
-        if (unlikely(ShouldRecord()))
-            return m_recorder->SetScissorRect(pRect);
+        RECT effectiveScissor = *pRect;
 
-        if (m_state.scissorRect == *pRect)
+        // Keep the eye targets unclipped.  Source's window-sized scissor can
+        // survive into the eye passes and trimming both the clear and the draw
+        // to 1920x1080 leaves the rest of the portrait target uninitialized.
+        if (g_Game && g_Game->m_VR && m_state.renderTargets[0] != nullptr) {
+            IDirect3DSurface9* currentRt =
+                static_cast<IDirect3DSurface9*>(m_state.renderTargets[0].ptr());
+            const VkExtent2D rtSize = m_state.renderTargets[0]->GetSurfaceExtent();
+
+            if (VrIsEyeSurface(currentRt) && rtSize.width != 0 && rtSize.height != 0) {
+                if (pRect->left != 0 || pRect->top != 0 ||
+                    pRect->right != static_cast<LONG>(rtSize.width) ||
+                    pRect->bottom != static_cast<LONG>(rtSize.height)) {
+                    static std::atomic<int> s_eyeScissorLogBudget{ 120 };
+                    if (s_eyeScissorLogBudget.fetch_sub(1, std::memory_order_relaxed) > 0) {
+                        Game::logMsg("[VR][D3D9EyeScissor] rt=%ux%u req=%ld,%ld,%ld,%ld -> 0,0,%u,%u",
+                            rtSize.width, rtSize.height,
+                            pRect->left, pRect->top, pRect->right, pRect->bottom,
+                            rtSize.width, rtSize.height);
+                    }
+
+                    effectiveScissor.left = 0;
+                    effectiveScissor.top = 0;
+                    effectiveScissor.right = static_cast<LONG>(rtSize.width);
+                    effectiveScissor.bottom = static_cast<LONG>(rtSize.height);
+                }
+            }
+        }
+
+        if (unlikely(ShouldRecord()))
+            return m_recorder->SetScissorRect(&effectiveScissor);
+
+        if (m_state.scissorRect == effectiveScissor)
             return D3D_OK;
 
-        m_state.scissorRect = *pRect;
+        m_state.scissorRect = effectiveScissor;
 
         m_flags.set(D3D9DeviceFlag::DirtyViewportScissor);
 
@@ -4044,6 +4352,47 @@ namespace dxvk {
             nullptr
         );
 
+        if (g_Game && g_Game->m_VR && m_state.renderTargets[0] != nullptr &&
+            PrimitiveCount >= 20) {
+            IDirect3DSurface9* probeRt =
+                static_cast<IDirect3DSurface9*>(m_state.renderTargets[0].ptr());
+            if (VrIsEyeSurface(probeRt)) {
+                const float* proj = reinterpret_cast<const float*>(
+                    &m_state.transforms[D3DTS_PROJECTION]);
+                const float kIdentity[16] = {
+                    1.0f, 0.0f, 0.0f, 0.0f,
+                    0.0f, 1.0f, 0.0f, 0.0f,
+                    0.0f, 0.0f, 1.0f, 0.0f,
+                    0.0f, 0.0f, 0.0f, 1.0f };
+                bool nonIdentity = false;
+                for (int pi = 0; pi < 16; ++pi) {
+                    if (std::fabs(proj[pi] - kIdentity[pi]) > 0.0001f) {
+                        nonIdentity = true;
+                        break;
+                    }
+                }
+
+                static std::atomic<int> s_eyeDrawLogBudget{ 80 };
+                if (nonIdentity && s_eyeDrawLogBudget.fetch_sub(1, std::memory_order_relaxed) > 0) {
+                    const VkExtent2D rtSize = m_state.renderTargets[0]->GetSurfaceExtent();
+                    const auto& vp = m_state.viewport;
+                    const auto& sc = m_state.scissorRect;
+                    Game::logMsg("[VR][D3D9Draw] rt=%ux%u vp=%u,%u %ux%u sc=%ld,%ld,%ld,%ld scEn=%d prims=%u proj=%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f",
+                        rtSize.width, rtSize.height,
+                        static_cast<unsigned>(vp.X), static_cast<unsigned>(vp.Y),
+                        static_cast<unsigned>(vp.Width), static_cast<unsigned>(vp.Height),
+                        static_cast<long>(sc.left), static_cast<long>(sc.top),
+                        static_cast<long>(sc.right), static_cast<long>(sc.bottom),
+                        m_state.renderStates[D3DRS_SCISSORTESTENABLE] ? 1 : 0,
+                        PrimitiveCount,
+                        proj[0], proj[1], proj[2], proj[3],
+                        proj[4], proj[5], proj[6], proj[7],
+                        proj[8], proj[9], proj[10], proj[11],
+                        proj[12], proj[13], proj[14], proj[15]);
+                }
+            }
+        }
+
         PrepareDraw(PrimitiveType, !dynamicSysmemVBOs, false);
 
         EmitCs([this,
@@ -4095,6 +4444,47 @@ namespace dxvk {
             &dynamicSysmemVBOs,
             &dynamicSysmemIBO
         );
+
+        if (g_Game && g_Game->m_VR && m_state.renderTargets[0] != nullptr &&
+            PrimitiveCount >= 20) {
+            IDirect3DSurface9* probeRt =
+                static_cast<IDirect3DSurface9*>(m_state.renderTargets[0].ptr());
+            if (VrIsEyeSurface(probeRt)) {
+                const float* proj = reinterpret_cast<const float*>(
+                    &m_state.transforms[D3DTS_PROJECTION]);
+                const float kIdentity[16] = {
+                    1.0f, 0.0f, 0.0f, 0.0f,
+                    0.0f, 1.0f, 0.0f, 0.0f,
+                    0.0f, 0.0f, 1.0f, 0.0f,
+                    0.0f, 0.0f, 0.0f, 1.0f };
+                bool nonIdentity = false;
+                for (int pi = 0; pi < 16; ++pi) {
+                    if (std::fabs(proj[pi] - kIdentity[pi]) > 0.0001f) {
+                        nonIdentity = true;
+                        break;
+                    }
+                }
+
+                static std::atomic<int> s_eyeDrawLogBudget{ 80 };
+                if (nonIdentity && s_eyeDrawLogBudget.fetch_sub(1, std::memory_order_relaxed) > 0) {
+                    const VkExtent2D rtSize = m_state.renderTargets[0]->GetSurfaceExtent();
+                    const auto& vp = m_state.viewport;
+                    const auto& sc = m_state.scissorRect;
+                    Game::logMsg("[VR][D3D9Draw] rt=%ux%u vp=%u,%u %ux%u sc=%ld,%ld,%ld,%ld scEn=%d prims=%u proj=%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f",
+                        rtSize.width, rtSize.height,
+                        static_cast<unsigned>(vp.X), static_cast<unsigned>(vp.Y),
+                        static_cast<unsigned>(vp.Width), static_cast<unsigned>(vp.Height),
+                        static_cast<long>(sc.left), static_cast<long>(sc.top),
+                        static_cast<long>(sc.right), static_cast<long>(sc.bottom),
+                        m_state.renderStates[D3DRS_SCISSORTESTENABLE] ? 1 : 0,
+                        PrimitiveCount,
+                        proj[0], proj[1], proj[2], proj[3],
+                        proj[4], proj[5], proj[6], proj[7],
+                        proj[8], proj[9], proj[10], proj[11],
+                        proj[12], proj[13], proj[14], proj[15]);
+                }
+            }
+        }
 
         PrepareDraw(PrimitiveType, !dynamicSysmemVBOs, !dynamicSysmemIBO);
 
@@ -8715,7 +9105,26 @@ namespace dxvk {
         // D3D9's coordinate system has its origin in the bottom left,
         // but the viewport coordinates are aligned to the top-left
         // corner so we can get away with flipping the viewport.
-        const D3DVIEWPORT9& vp = m_state.viewport;
+        D3DVIEWPORT9 vp = m_state.viewport;
+
+        bool isEyeRt = false;
+        VkExtent2D eyeRtSize = { 0u, 0u };
+        if (g_Game && g_Game->m_VR && m_state.renderTargets[0] != nullptr) {
+            IDirect3DSurface9* currentRt =
+                static_cast<IDirect3DSurface9*>(m_state.renderTargets[0].ptr());
+            if (VrIsEyeSurface(currentRt)) {
+                eyeRtSize = m_state.renderTargets[0]->GetSurfaceExtent();
+                if (eyeRtSize.width != 0 && eyeRtSize.height != 0) {
+                    isEyeRt = true;
+                    vp.X = 0;
+                    vp.Y = 0;
+                    vp.Width = eyeRtSize.width;
+                    vp.Height = eyeRtSize.height;
+                    vp.MinZ = 0.0f;
+                    vp.MaxZ = 1.0f;
+                }
+            }
+        }
 
         // Correctness Factor for 1/2 texel offset
         constexpr float cf = 0.5f;
@@ -8769,6 +9178,12 @@ namespace dxvk {
             state.scissor = VkRect2D{
               VkOffset2D { int32_t(vp.X), int32_t(vp.Y) },
               VkExtent2D { vp.Width,      vp.Height     } };
+        }
+
+        if (isEyeRt) {
+            state.scissor = VkRect2D{
+              VkOffset2D { 0, 0 },
+              VkExtent2D { eyeRtSize.width, eyeRtSize.height } };
         }
 
         EmitCs([

@@ -26,7 +26,7 @@
 
 namespace
 {
-    ozz::math::Transform ToOzzTransform(const vr::VRBoneTransform_t& transform, bool forceIdentity)
+    ozz::math::Transform ToOzzTransform(const xr::VRBoneTransform_t& transform, bool forceIdentity)
     {
         if (forceIdentity)
             return ozz::math::Transform::identity();
@@ -45,16 +45,16 @@ namespace
     }
 
     bool TryReadOpenVRSkeletalSummary(
-        vr::IVRInput* input,
-        vr::VRActionHandle_t action,
-        vr::EVRSummaryType summaryType,
-        vr::VRSkeletalSummaryData_t& outSummary)
+        xr::Input* input,
+        xr::VRActionHandle_t action,
+        xr::EVRSummaryType summaryType,
+        xr::VRSkeletalSummaryData_t& outSummary)
     {
         outSummary = {};
-        if (!input || action == vr::k_ulInvalidActionHandle)
+        if (!input || action == xr::k_ulInvalidActionHandle)
             return false;
 
-        vr::EVRInputError result = vr::VRInputError_None;
+        xr::EVRInputError result = xr::VRInputError_None;
         bool faulted = false;
         __try
         {
@@ -65,7 +65,7 @@ namespace
             faulted = true;
         }
 
-        return !faulted && result == vr::VRInputError_None;
+        return !faulted && result == xr::VRInputError_None;
     }
 
     VrHandMatrix4 ToVrHandMatrix(const ozz::math::Float4x4& matrix)
@@ -76,7 +76,7 @@ namespace
         return out;
     }
 
-    VrHandMatrix4 ToVrHandMatrix(const vr::VRBoneTransform_t& transform)
+    VrHandMatrix4 ToVrHandMatrix(const xr::VRBoneTransform_t& transform)
     {
         float x = transform.orientation.x;
         float y = transform.orientation.y;
@@ -162,7 +162,7 @@ namespace
 
     bool BuildSummaryCurlPalette(
         const VrHandMeshAsset& asset,
-        const vr::VRSkeletalSummaryData_t& summary,
+        const xr::VRSkeletalSummaryData_t& summary,
         std::vector<VrHandMatrixRows3x4>& outPalette,
         const VrHandFingerCurlOverride* fingerCurlOverride,
         const std::array<float, 5>* fingerMaxCurl)
@@ -173,7 +173,7 @@ namespace
             return false;
 
         const char suffix = rightHand ? 'r' : 'l';
-        static const char* kFingerNames[vr::VRFinger_Count] =
+        static const char* kFingerNames[xr::VRFinger_Count] =
         {
             "thumb",
             "index",
@@ -181,7 +181,7 @@ namespace
             "ring",
             "pinky"
         };
-        static const float kMaxCurlRadians[vr::VRFinger_Count][3] =
+        static const float kMaxCurlRadians[xr::VRFinger_Count][3] =
         {
             { 0.75f, 0.90f, 0.65f },
             { 1.15f, 1.25f, 0.90f },
@@ -194,7 +194,7 @@ namespace
         for (size_t joint = 0; joint < asset.jointNames.size(); ++joint)
             localMatrices[joint] = BuildBindLocalMatrix(asset, static_cast<int>(joint));
 
-        for (int finger = 0; finger < vr::VRFinger_Count; ++finger)
+        for (int finger = 0; finger < xr::VRFinger_Count; ++finger)
         {
             float curl = std::clamp(summary.flFingerCurl[finger], 0.0f, 1.0f);
             const float globalMaxCurl = ResolveFingerMaxCurl(fingerMaxCurl, finger);
@@ -267,11 +267,11 @@ namespace
 
 struct VrHandSkeletonRuntime::Impl
 {
-    vr::VRActionHandle_t action = vr::k_ulInvalidActionHandle;
-    std::vector<vr::BoneIndex_t> parents;
+    xr::VRActionHandle_t action = xr::k_ulInvalidActionHandle;
+    std::vector<xr::BoneIndex_t> parents;
     std::vector<std::string> openVrJointNames;
-    std::vector<vr::VRBoneTransform_t> transforms;
-    vr::VRSkeletalSummaryData_t summary{};
+    std::vector<xr::VRBoneTransform_t> transforms;
+    xr::VRSkeletalSummaryData_t summary{};
     ozz::unique_ptr<ozz::animation::Skeleton> skeleton;
     ozz::vector<ozz::math::SoaTransform> locals;
     ozz::vector<ozz::math::Float4x4> models;
@@ -279,6 +279,7 @@ struct VrHandSkeletonRuntime::Impl
     std::vector<int> ozzJointToOpenVrBone;
     bool hasPose = false;
     bool hasSummary = false;
+    bool summaryOnly = false;
 };
 
 VrHandSkeletonRuntime::VrHandSkeletonRuntime()
@@ -288,61 +289,80 @@ VrHandSkeletonRuntime::VrHandSkeletonRuntime()
 
 VrHandSkeletonRuntime::~VrHandSkeletonRuntime() = default;
 
-bool VrHandSkeletonRuntime::Initialize(vr::IVRInput* input, vr::VRActionHandle_t action, std::string& outError)
+bool VrHandSkeletonRuntime::Initialize(xr::Input* input, xr::VRActionHandle_t action, std::string& outError)
 {
     outError.clear();
-    if (!input || action == vr::k_ulInvalidActionHandle)
+    if (!input || action == xr::k_ulInvalidActionHandle)
     {
         outError = "invalid OpenVR skeletal action handle";
         return false;
     }
 
     uint32_t boneCount = 0;
-    if (input->GetBoneCount(action, &boneCount) != vr::VRInputError_None || boneCount == 0 || boneCount > 64)
+    if (input->GetBoneCount(action, &boneCount) != xr::VRInputError_None || boneCount == 0 || boneCount > 64)
     {
-        outError = "OpenVR returned an invalid hand bone count";
-        return false;
+        // OpenXR has no core controller-skeleton action.  The glove renderer
+        // can still work from the synthesized VRSkeletalSummaryData curls and
+        // the GLB bind pose, so enter summary-only mode instead of disabling
+        // the hands entirely.
+        m_Impl->action = action;
+        m_Impl->summaryOnly = true;
+        m_Impl->hasPose = false;
+        m_Impl->hasSummary = false;
+        return true;
     }
 
     m_Impl->action = action;
-    m_Impl->parents.assign(boneCount, vr::k_unInvalidBoneIndex);
+    m_Impl->parents.assign(boneCount, xr::k_unInvalidBoneIndex);
     m_Impl->openVrJointNames.assign(boneCount, std::string{});
-    m_Impl->transforms.assign(boneCount, vr::VRBoneTransform_t{});
+    m_Impl->transforms.assign(boneCount, xr::VRBoneTransform_t{});
 
-    if (input->GetBoneHierarchy(action, m_Impl->parents.data(), boneCount) != vr::VRInputError_None)
+    if (input->GetBoneHierarchy(action, m_Impl->parents.data(), boneCount) != xr::VRInputError_None)
     {
-        outError = "OpenVR GetBoneHierarchy failed";
-        return false;
+        m_Impl->summaryOnly = true;
+        m_Impl->transforms.clear();
+        m_Impl->parents.clear();
+        m_Impl->openVrJointNames.clear();
+        outError.clear();
+        return true;
     }
 
     for (uint32_t i = 0; i < boneCount; ++i)
     {
-        char name[vr::k_unMaxBoneNameLength]{};
-        if (input->GetBoneName(action, static_cast<vr::BoneIndex_t>(i), name, static_cast<uint32_t>(sizeof(name))) != vr::VRInputError_None)
+        char name[xr::k_unMaxBoneNameLength]{};
+        if (input->GetBoneName(action, static_cast<xr::BoneIndex_t>(i), name, static_cast<uint32_t>(sizeof(name))) != xr::VRInputError_None)
         {
-            outError = "OpenVR GetBoneName failed";
-            return false;
+            m_Impl->summaryOnly = true;
+            m_Impl->transforms.clear();
+            m_Impl->parents.clear();
+            m_Impl->openVrJointNames.clear();
+            outError.clear();
+            return true;
         }
         m_Impl->openVrJointNames[i] = name;
     }
 
     if (input->GetSkeletalReferenceTransforms(
         action,
-        vr::VRSkeletalTransformSpace_Parent,
-        vr::VRSkeletalReferencePose_BindPose,
+        xr::VRSkeletalTransformSpace_Parent,
+        xr::VRSkeletalReferencePose_BindPose,
         m_Impl->transforms.data(),
-        boneCount) != vr::VRInputError_None)
+        boneCount) != xr::VRInputError_None)
     {
-        outError = "OpenVR GetSkeletalReferenceTransforms failed";
-        return false;
+        m_Impl->summaryOnly = true;
+        m_Impl->transforms.clear();
+        m_Impl->parents.clear();
+        m_Impl->openVrJointNames.clear();
+        outError.clear();
+        return true;
     }
 
     std::vector<std::vector<uint32_t>> children(boneCount);
     std::vector<uint32_t> roots;
     for (uint32_t i = 0; i < boneCount; ++i)
     {
-        const vr::BoneIndex_t parent = m_Impl->parents[i];
-        if (parent == vr::k_unInvalidBoneIndex)
+        const xr::BoneIndex_t parent = m_Impl->parents[i];
+        if (parent == xr::k_unInvalidBoneIndex)
         {
             roots.push_back(i);
             continue;
@@ -367,7 +387,7 @@ bool VrHandSkeletonRuntime::Initialize(vr::IVRInput* input, vr::VRActionHandle_t
             destination.resize(destination.size() + 1u);
             auto& joint = destination.back();
             joint.name = m_Impl->openVrJointNames[index].c_str();
-            joint.transform = ToOzzTransform(m_Impl->transforms[index], m_Impl->parents[index] == vr::k_unInvalidBoneIndex);
+            joint.transform = ToOzzTransform(m_Impl->transforms[index], m_Impl->parents[index] == xr::k_unInvalidBoneIndex);
             for (uint32_t child : children[index])
                 appendJoint(child, joint.children);
         };
@@ -416,17 +436,18 @@ bool VrHandSkeletonRuntime::Initialize(vr::IVRInput* input, vr::VRActionHandle_t
     return true;
 }
 
-bool VrHandSkeletonRuntime::Update(vr::IVRInput* input, vr::EVRSkeletalMotionRange motionRange, std::string& outError)
+bool VrHandSkeletonRuntime::Update(xr::Input* input, xr::EVRSkeletalMotionRange motionRange, std::string& outError)
 {
     outError.clear();
-    if (!input || !m_Impl->skeleton || m_Impl->action == vr::k_ulInvalidActionHandle)
+    if (!input || (!m_Impl->skeleton && !m_Impl->summaryOnly) ||
+        m_Impl->action == xr::k_ulInvalidActionHandle)
     {
         outError = "hand skeleton runtime is not initialized";
         return false;
     }
 
-    vr::InputSkeletalActionData_t actionData{};
-    if (input->GetSkeletalActionData(m_Impl->action, &actionData, sizeof(actionData)) != vr::VRInputError_None || !actionData.bActive)
+    xr::InputSkeletalActionData_t actionData{};
+    if (input->GetSkeletalActionData(m_Impl->action, &actionData, sizeof(actionData)) != xr::VRInputError_None || !actionData.bActive)
     {
         m_Impl->hasPose = false;
         m_Impl->hasSummary = false;
@@ -436,15 +457,26 @@ bool VrHandSkeletonRuntime::Update(vr::IVRInput* input, vr::EVRSkeletalMotionRan
     m_Impl->hasSummary = TryReadOpenVRSkeletalSummary(
         input,
         m_Impl->action,
-        vr::VRSummaryType_FromAnimation,
+        xr::VRSummaryType_FromAnimation,
         m_Impl->summary);
+
+    if (m_Impl->summaryOnly)
+    {
+        m_Impl->hasPose = m_Impl->hasSummary;
+        if (!m_Impl->hasPose)
+        {
+            outError = "OpenXR skeletal summary is unavailable";
+            return false;
+        }
+        return true;
+    }
 
     const bool hasBoneData = input->GetSkeletalBoneData(
         m_Impl->action,
-        vr::VRSkeletalTransformSpace_Model,
+        xr::VRSkeletalTransformSpace_Model,
         motionRange,
         m_Impl->transforms.data(),
-        static_cast<uint32_t>(m_Impl->transforms.size())) == vr::VRInputError_None;
+        static_cast<uint32_t>(m_Impl->transforms.size())) == xr::VRInputError_None;
     if (!m_Impl->hasSummary && !hasBoneData)
     {
         outError = "OpenVR GetSkeletalSummaryData and GetSkeletalBoneData failed";
@@ -470,7 +502,18 @@ bool VrHandSkeletonRuntime::BuildSkinningPalette(
 {
     outError.clear();
     outPalette.clear();
-    if (!m_Impl->skeleton || !m_Impl->hasPose)
+    if (!m_Impl->hasPose)
+        return false;
+    if (m_Impl->summaryOnly)
+    {
+        if (!m_Impl->hasSummary)
+            return false;
+        if (BuildSummaryCurlPalette(asset, m_Impl->summary, outPalette, fingerCurlOverride, fingerMaxCurl))
+            return true;
+        outError = "failed to build the summary-based hand palette";
+        return false;
+    }
+    if (!m_Impl->skeleton)
         return false;
     if (!asset.IsValid())
     {
@@ -525,7 +568,7 @@ bool VrHandSkeletonRuntime::BuildSkinningPalette(
 
 bool VrHandSkeletonRuntime::IsInitialized() const
 {
-    return m_Impl && m_Impl->skeleton != nullptr;
+    return m_Impl && (m_Impl->skeleton != nullptr || m_Impl->summaryOnly);
 }
 
 bool VrHandSkeletonRuntime::HasPose() const

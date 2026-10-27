@@ -63,24 +63,8 @@ if fs.is_dir('../../../L4D2VR/sdk')
   d3d9_inc_dirs += [ include_directories('../../../L4D2VR/sdk') ]
 endif
 
-if platform == 'windows'
-  if fs.is_dir('../../../thirdparty/openvr/include')
-    d3d9_inc_dirs += [ include_directories('../../../thirdparty/openvr/include') ]
-  endif
-
-  openvr_lib_dir = ''
-  if cpu_family == 'x86' and fs.is_dir('../../../thirdparty/openvr/lib/win32')
-    openvr_lib_dir = '../../../thirdparty/openvr/lib/win32'
-  elif cpu_family == 'x86_64' and fs.is_dir('../../../thirdparty/openvr/lib/win64')
-    openvr_lib_dir = '../../../thirdparty/openvr/lib/win64'
-  endif
-
-  if openvr_lib_dir != ''
-    openvr_lib = cpp.find_library('openvr_api', dirs: [ openvr_lib_dir ], required: false)
-    if openvr_lib.found()
-      d3d9_extra_deps += [ openvr_lib ]
-    endif
-  endif
+if platform == 'windows' and fs.is_dir('../../../thirdparty/openxr/include')
+  d3d9_inc_dirs += [ include_directories('../../../thirdparty/openxr/include') ]
 endif
 
 if platform != 'windows'

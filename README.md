@@ -30,7 +30,8 @@ It's best to subscribe to this mod directly on the Workshop to avoid missing upd
 ## How to use
 1. Download [L4D2VR.zip](https://github.com/keyou91/l4d2vr/releases) and extract the files to your Left 4 Dead 2 installation directory at: `steamapps/common/Left 4 Dead 2`
     - You can also access the installation directory by right-clicking Left 4 Dead 2 in Steam and going to: Manage > **Browse local files**
-2. Launch SteamVR, then launch Left 4 Dead 2 with these [launch options](https://help.steampowered.com/en/faqs/view/7D01-D2DD-D75E-2955): <br>`-heapsize 524288 -processheap -high -novid -windowed`
+2. Install a 32-bit OpenXR loader (`openxr_loader.dll`) next to `left4dead2.exe` (or in the Wine/Proton prefix). Start your OpenXR runtime (SteamVR, WiVRn, Monado, WMR, etc.), then launch Left 4 Dead 2 with these [launch options](https://help.steampowered.com/en/faqs/view/7D01-D2DD-D75E-2955): <br>`-heapsize 524288 -processheap -high -novid -windowed`
+    - L4D2VR now talks to the OpenXR runtime directly. `openvr_api.dll` is no longer used.
     - If you use a desktop client resolution of 2k or higher, add `-bigfonts` to the launch options to make in-game text larger; otherwise, the text on the HUD will be very small.
 3. Join or create your campaign and enjoy the game.
 4. To recenter the camera height, press down on the left stick. To see the HUD, aim the left controller up or down.
@@ -49,7 +50,13 @@ It's best to subscribe to this mod directly on the Workshop to avoid missing upd
 
 ## Troubleshooting
 ### If the game isn't loading in VR:
-* Disable SteamVR theater in [SteamVR settings](https://img.itch.zone/aW1nLzE0MTMyNTY4LnBuZw==/original/pKSXNc.png)
+* Make sure a **32-bit** `openxr_loader.dll` is installed next to `left4dead2.exe` (or in the Wine/Proton prefix) and that `XR_RUNTIME_JSON` / the active OpenXR runtime is set correctly.
+* Confirm the runtime supports Vulkan (`XR_KHR_vulkan_enable2` or `XR_KHR_vulkan_enable`). WiVRn, Monado, SteamVR's OpenXR runtime, and current WMR/Oculus runtimes do.
+* The mod no longer uses SteamVR theater or `openvr_api.dll`; those settings/errors do not apply.
+* OpenXR has no runtime-provided VR keyboard. The in-game config panel's text fields cannot open one; edit `VR/config.txt` on the desktop instead.
+* OpenXR composition layers cannot express OpenVR's curved-overlay parameter. HUD/menu panels are submitted as flat quads; the rest of the overlay behavior (position, size, mouse input) is preserved.
+* The default controller bindings are compiled into the backend (Touch, Index, WMR, Cosmos, Vive, and KHR simple profiles). OpenXR has no per-app SteamVR-style binding UI, so the SteamVR action manifest is no longer read.
+* Controller skeletal animation is not part of core OpenXR. The physical glove hands use the existing GLB assets with procedurally curled fingers driven by trigger/grip state; copy the Valve glove GLBs to `VR\vr_hands` or keep SteamVR installed for the automatic fallback path.
 
 ### If the game shows "Failed to create D3D device!":
 * L4D2VR uses a custom `d3d9.dll` based on DXVK. Even though the error says D3D, the failure is often the Vulkan backend failing to initialize.

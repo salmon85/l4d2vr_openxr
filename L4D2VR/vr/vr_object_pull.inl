@@ -32,7 +32,7 @@ namespace
     };
 
     static Vector ObjectPullConvertOpenVRPosition(
-        const ::vr::HmdMatrix34_t& matrix)
+        const ::xr::HmdMatrix34_t& matrix)
     {
         return Vector(
             -matrix.m[2][3],
@@ -41,7 +41,7 @@ namespace
     }
 
     static Vector ObjectPullConvertOpenVRVector(
-        const ::vr::HmdVector3_t& value)
+        const ::xr::HmdVector3_t& value)
     {
         return Vector(
             -value.v[2],
@@ -58,37 +58,37 @@ namespace
         if (!instance || !instance->m_System)
             return false;
 
-        const ::vr::ETrackedControllerRole role = gunHandPhysicalLeft
-            ? ::vr::TrackedControllerRole_LeftHand
-            : ::vr::TrackedControllerRole_RightHand;
-        const ::vr::TrackedDeviceIndex_t controllerIndex =
+        const ::xr::ETrackedControllerRole role = gunHandPhysicalLeft
+            ? ::xr::TrackedControllerRole_LeftHand
+            : ::xr::TrackedControllerRole_RightHand;
+        const ::xr::TrackedDeviceIndex_t controllerIndex =
             instance->m_System->GetTrackedDeviceIndexForControllerRole(role);
-        if (controllerIndex == ::vr::k_unTrackedDeviceIndexInvalid ||
-            controllerIndex >= ::vr::k_unMaxTrackedDeviceCount)
+        if (controllerIndex == ::xr::k_unTrackedDeviceIndexInvalid ||
+            controllerIndex >= ::xr::k_unMaxTrackedDeviceCount)
         {
             return false;
         }
 
-        const ::vr::ETrackingUniverseOrigin trackingOrigin =
+        const ::xr::ETrackingUniverseOrigin trackingOrigin =
             instance->m_Compositor
                 ? instance->m_Compositor->GetTrackingSpace()
-                : ::vr::TrackingUniverseStanding;
+                : ::xr::TrackingUniverseStanding;
         // OpenVR only needs to fill entries through the controller index. Avoid
         // zeroing and requesting all 64 device poses on every armed-frame sample.
-        std::array<::vr::TrackedDevicePose_t,
-            ::vr::k_unMaxTrackedDeviceCount> livePoses;
+        std::array<::xr::TrackedDevicePose_t,
+            ::xr::k_unMaxTrackedDeviceCount> livePoses;
         const uint32_t poseCount = std::min<uint32_t>(
             static_cast<uint32_t>(controllerIndex) + 1u,
-            ::vr::k_unMaxTrackedDeviceCount);
+            ::xr::k_unMaxTrackedDeviceCount);
         instance->m_System->GetDeviceToAbsoluteTrackingPose(
             trackingOrigin,
             0.0f,
             livePoses.data(),
             poseCount);
 
-        const ::vr::TrackedDevicePose_t& hmdPose =
-            livePoses[::vr::k_unTrackedDeviceIndex_Hmd];
-        const ::vr::TrackedDevicePose_t& controllerPose =
+        const ::xr::TrackedDevicePose_t& hmdPose =
+            livePoses[::xr::k_unTrackedDeviceIndex_Hmd];
+        const ::xr::TrackedDevicePose_t& controllerPose =
             livePoses[controllerIndex];
         if (!hmdPose.bPoseIsValid || !controllerPose.bPoseIsValid)
             return false;

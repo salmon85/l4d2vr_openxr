@@ -22936,16 +22936,45 @@ namespace
 void Hooks::dAdjustEngineViewport(int& x, int& y, int& width, int& height)
 {
     hkAdjustEngineViewport.fOriginal(x, y, width, height);
+
+    // The native-scene path intentionally leaves Source's view rect at the
+    // desktop client size.  The eye RenderView is normalized to the native
+    // scene target and the completed frame is scaled into the HMD eye target.
+    if (m_VR && m_VR->m_IsVREnabled &&
+        m_Game && m_Game->m_EngineClient && m_Game->m_EngineClient->IsInGame())
+    {
+        static std::atomic<int> s_adjustViewportLogBudget{ 8 };
+        if (s_adjustViewportLogBudget.fetch_sub(1, std::memory_order_relaxed) > 0)
+        {
+            int bbW = 0, bbH = 0;
+            if (m_Game->m_MaterialSystem)
+                m_Game->m_MaterialSystem->GetBackBufferDimensions(bbW, bbH);
+            Game::logMsg("[VR][AdjustEngineViewport] native=%d,%d %dx%d eye=%ux%u bb=%dx%d scene=%ux%u",
+                x, y, width, height,
+                m_VR->m_RenderWidth, m_VR->m_RenderHeight,
+                bbW, bbH, m_VR->m_EyeSceneWidth, m_VR->m_EyeSceneHeight);
+        }
+    }
 }
 
 void Hooks::dViewport(void* ecx, void* edx, int x, int y, int width, int height)
 {
+    if (g_VREyeSceneViewportActive != 0)
+    {
+        static thread_local int s_eyeViewportLogBudget = 200;
+        if (s_eyeViewportLogBudget-- > 0)
+        {
+            Game::logMsg("[VR][EyeViewportCall] eye=%d vp=%d,%d %dx%d",
+                g_VREyeSceneViewportActive, x, y, width, height);
+        }
+    }
     hkViewport.fOriginal(ecx, x, y, width, height);
 }
 
 void Hooks::dGetViewport(void* ecx, void* edx, int& x, int& y, int& width, int& height)
 {
     hkGetViewport.fOriginal(ecx, x, y, width, height);
+
 }
 
 int Hooks::dTestMeleeSwingCollisionClient(void* ecx, void* edx, Vector const& vec)
@@ -24851,6 +24880,20 @@ void Hooks::dPushRenderTargetAndViewport(void* ecx, void* edx, ITexture* pTextur
 {
     if (!m_VR->m_CreatedVRTextures.load(std::memory_order_acquire))
         return hkPushRenderTargetAndViewport.fOriginal(ecx, pTexture, pDepthTexture, nViewX, nViewY, nViewW, nViewH);
+
+    if (g_VREyeSceneViewportActive != 0)
+    {
+        static thread_local int s_eyePushRtLogBudget = 160;
+        if (s_eyePushRtLogBudget-- > 0)
+        {
+            int texMapW = 0, texMapH = 0, texActualW = 0, texActualH = 0;
+            DebugTextureFullSize(pTexture, texMapW, texMapH, texActualW, texActualH);
+            Game::logMsg("[VR][EyePushRT] eye=%d tex=%s map=%dx%d actual=%dx%d req=%d,%d %dx%d depth=%s",
+                g_VREyeSceneViewportActive, DebugTextureName(pTexture),
+                texMapW, texMapH, texActualW, texActualH,
+                nViewX, nViewY, nViewW, nViewH, DebugTextureName(pDepthTexture));
+        }
+    }
 
     const int queueMode = (m_Game != nullptr) ? m_Game->GetMatQueueMode() : 0;
     if (m_VR->m_RenderPipelineDebugLog)

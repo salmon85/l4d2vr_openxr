@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup Label="ProjectConfigurations">
     <ProjectConfiguration Include="Debug|Win32">
@@ -73,16 +73,16 @@
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <LinkIncremental>true</LinkIncremental>
     <TargetName>d3d9</TargetName>
-    <IncludePath>$(SolutionDir)thirdparty\cgltf;$(SolutionDir)thirdparty\ozz-animation-install\win32\include;$(SolutionDir)thirdparty\directx\d3dx9\include;$(SolutionDir)dxvk_new\include\vulkan\include;$(SolutionDir)dxvk_new\include\spirv\include;$(SolutionDir)dxvk_new\include;$(SolutionDir)dxvk_new\include\shaders;$(SolutionDir)dxvk_new\src\d3d9\shaders;$(SolutionDir)dxvk_new;$(DXSDK_DIR)Include;$(SolutionDir)thirdparty\minhook\include;$(SolutionDir)thirdparty\openvr\include;$(ProjectDir)sdk;$(ProjectDir);$(SolutionDir);$(SolutionDir)dxvk_new\src\d3d9;$(SolutionDir)dxvk_new\subprojects\libdisplay-info\include;$(IncludePath)</IncludePath>
+    <IncludePath>$(SolutionDir)thirdparty\cgltf;$(SolutionDir)thirdparty\ozz-animation-install\win32\include;$(SolutionDir)thirdparty\directx\d3dx9\include;$(SolutionDir)dxvk_new\include\vulkan\include;$(SolutionDir)dxvk_new\include\spirv\include;$(SolutionDir)dxvk_new\include;$(SolutionDir)dxvk_new\include\shaders;$(SolutionDir)dxvk_new\src\d3d9\shaders;$(SolutionDir)dxvk_new;$(DXSDK_DIR)Include;$(SolutionDir)thirdparty\minhook\include;$(SolutionDir)thirdparty\openxr\include;$(ProjectDir)sdk;$(ProjectDir);$(SolutionDir);$(SolutionDir)dxvk_new\src\d3d9;$(SolutionDir)dxvk_new\subprojects\libdisplay-info\include;$(IncludePath)</IncludePath>
     <ExecutablePath>$(ProjectDir)include;$(ExecutablePath)</ExecutablePath>
-    <LibraryPath>$(SolutionDir)thirdparty\ozz-animation-install\win32\lib\$(Configuration);$(SolutionDir)thirdparty\directx\d3dx9\lib\x86;$(DXSDK_DIR)Lib\x86;$(SolutionDir)thirdparty\minhook\lib\$(Configuration);$(SolutionDir)thirdparty\openvr\lib\win32;$(LibraryPath)</LibraryPath>
+    <LibraryPath>$(SolutionDir)thirdparty\ozz-animation-install\win32\lib\$(Configuration);$(SolutionDir)thirdparty\directx\d3dx9\lib\x86;$(DXSDK_DIR)Lib\x86;$(SolutionDir)thirdparty\minhook\lib\$(Configuration);$(LibraryPath)</LibraryPath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
     <LinkIncremental>false</LinkIncremental>
     <TargetName>d3d9</TargetName>
-    <IncludePath>$(SolutionDir)thirdparty\cgltf;$(SolutionDir)thirdparty\ozz-animation-install\win32\include;$(SolutionDir)thirdparty\directx\d3dx9\include;$(SolutionDir)dxvk_new\include\vulkan\include;$(SolutionDir)dxvk_new\include\spirv\include;$(SolutionDir)dxvk_new\include;$(SolutionDir)dxvk_new\include\shaders;$(SolutionDir)dxvk_new\src\d3d9\shaders;$(SolutionDir)dxvk_new;$(DXSDK_DIR)Include;$(SolutionDir)thirdparty\minhook\include;$(SolutionDir)thirdparty\openvr\include;$(ProjectDir)sdk;$(ProjectDir);$(SolutionDir);$(SolutionDir)dxvk_new\src\d3d9;$(SolutionDir)dxvk_new\subprojects\libdisplay-info\include;$(IncludePath)</IncludePath>
+    <IncludePath>$(SolutionDir)thirdparty\cgltf;$(SolutionDir)thirdparty\ozz-animation-install\win32\include;$(SolutionDir)thirdparty\directx\d3dx9\include;$(SolutionDir)dxvk_new\include\vulkan\include;$(SolutionDir)dxvk_new\include\spirv\include;$(SolutionDir)dxvk_new\include;$(SolutionDir)dxvk_new\include\shaders;$(SolutionDir)dxvk_new\src\d3d9\shaders;$(SolutionDir)dxvk_new;$(DXSDK_DIR)Include;$(SolutionDir)thirdparty\minhook\include;$(SolutionDir)thirdparty\openxr\include;$(ProjectDir)sdk;$(ProjectDir);$(SolutionDir);$(SolutionDir)dxvk_new\src\d3d9;$(SolutionDir)dxvk_new\subprojects\libdisplay-info\include;$(IncludePath)</IncludePath>
     <ExecutablePath>$(ProjectDir)include;$(ExecutablePath)</ExecutablePath>
-    <LibraryPath>$(SolutionDir)thirdparty\ozz-animation-install\win32\lib\$(Configuration);$(SolutionDir)thirdparty\directx\d3dx9\lib\x86;$(DXSDK_DIR)Lib\x86;$(SolutionDir)thirdparty\minhook\lib\$(Configuration);$(SolutionDir)thirdparty\openvr\lib\win32;$(LibraryPath)</LibraryPath>
+    <LibraryPath>$(SolutionDir)thirdparty\ozz-animation-install\win32\lib\$(Configuration);$(SolutionDir)thirdparty\directx\d3dx9\lib\x86;$(DXSDK_DIR)Lib\x86;$(SolutionDir)thirdparty\minhook\lib\$(Configuration);$(LibraryPath)</LibraryPath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <LinkIncremental>true</LinkIncremental>
@@ -111,7 +111,7 @@
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <EnableUAC>false</EnableUAC>
       <AdditionalLibraryDirectories>%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>openvr_api.lib;libMinHook.x86.lib;setupapi.lib;ozz_animation.lib;ozz_animation_offline.lib;ozz_base.lib;$(SolutionDir)dxvk_new\lib32\vulkan-1.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>libMinHook.x86.lib;setupapi.lib;ozz_animation.lib;ozz_animation_offline.lib;ozz_base.lib;$(SolutionDir)dxvk_new\lib32\vulkan-1.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <ModuleDefinitionFile>$(SolutionDir)dxvk_new\src\d3d9\d3d9.def</ModuleDefinitionFile>
     </Link>
     <PostBuildEvent>
@@ -140,7 +140,7 @@
       <EnableUAC>false</EnableUAC>
       <ModuleDefinitionFile>$(SolutionDir)dxvk_new\src\d3d9\d3d9.def</ModuleDefinitionFile>
       <AdditionalLibraryDirectories>%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>openvr_api.lib;libMinHook.x86.lib;setupapi.lib;ozz_animation.lib;ozz_animation_offline.lib;ozz_base.lib;$(SolutionDir)dxvk_new\lib32\vulkan-1.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>libMinHook.x86.lib;setupapi.lib;ozz_animation.lib;ozz_animation_offline.lib;ozz_base.lib;$(SolutionDir)dxvk_new\lib32\vulkan-1.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <PostBuildEvent>
       <Command>copy /Y "$(OutDir)$(TargetName)$(TargetExt)" "E:\Program Files (x86)\Steam\steamapps\common\Left 4 Dead 2\$(TargetName)$(TargetExt)"</Command>
@@ -172,7 +172,6 @@
       <ConformanceMode>true</ConformanceMode>
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
       <PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>
-      <AdditionalIncludeDirectories>C:\Dev\infra\openvr\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <EnableParallelCodeGeneration>true</EnableParallelCodeGeneration>
     </ClCompile>
     <Link>
@@ -182,12 +181,10 @@
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <EnableUAC>false</EnableUAC>
       <ModuleDefinitionFile>$(ProjectDir)exports.def</ModuleDefinitionFile>
-      <AdditionalLibraryDirectories>C:\Dev\infra\openvr\lib\win32;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>openvr_api.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClInclude Include="..\dxvk_new\include\openvr\openvr.hpp" />
     <ClInclude Include="..\dxvk_new\include\shaders\d3d9_convert_a2w10v10u10.h" />
     <ClInclude Include="..\dxvk_new\include\shaders\d3d9_convert_l6v5u5.h" />
     <ClInclude Include="..\dxvk_new\include\shaders\d3d9_convert_nv12.h" />
@@ -363,7 +360,6 @@
     <ClInclude Include="..\dxvk_new\src\dxvk\dxvk_meta_pack.h" />
     <ClInclude Include="..\dxvk_new\src\dxvk\dxvk_meta_resolve.h" />
     <ClInclude Include="..\dxvk_new\src\dxvk\dxvk_objects.h" />
-    <ClInclude Include="..\dxvk_new\src\dxvk\dxvk_openvr.h" />
     <ClInclude Include="..\dxvk_new\src\dxvk\dxvk_openxr.h" />
     <ClInclude Include="..\dxvk_new\src\dxvk\dxvk_options.h" />
     <ClInclude Include="..\dxvk_new\src\dxvk\framepacer\dxvk_framepacer.h" />
@@ -466,6 +462,9 @@
     <ClInclude Include="sdk\vector.h" />
     <ClInclude Include="sigscanner.h" />
     <ClInclude Include="vr.h" />
+    <ClInclude Include="vr_api.h" />
+    <ClInclude Include="openxr_bridge_protocol.h" />
+    <ClInclude Include="openxr_helper_bridge.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\dxvk_new\src\d3d9\d3d9_adapter.cpp" />
@@ -550,7 +549,6 @@
     <ClCompile Include="..\dxvk_new\src\dxvk\dxvk_meta_copy.cpp" />
     <ClCompile Include="..\dxvk_new\src\dxvk\dxvk_meta_mipgen.cpp" />
     <ClCompile Include="..\dxvk_new\src\dxvk\dxvk_meta_resolve.cpp" />
-    <ClCompile Include="..\dxvk_new\src\dxvk\dxvk_openvr.cpp" />
     <ClCompile Include="..\dxvk_new\src\dxvk\dxvk_openxr.cpp" />
     <ClCompile Include="..\dxvk_new\src\dxvk\dxvk_options.cpp" />
     <ClCompile Include="..\dxvk_new\src\dxvk\dxvk_pipelayout.cpp" />
@@ -658,6 +656,8 @@
     <ClCompile Include="hooks.cpp" />
     <ClCompile Include="sdk\checksum_crc.cpp" />
     <ClCompile Include="vr.cpp" />
+    <ClCompile Include="vr_openxr_helper.cpp" />
+    <ClCompile Include="openxr_helper_bridge.cpp" />
     <ClCompile Include="vr_hands\vr_hand_asset_loader.cpp" />
     <ClCompile Include="vr_hands\vr_hand_manifest.cpp" />
     <ClCompile Include="vr_hands\vr_hand_renderer_d3d9.cpp" />

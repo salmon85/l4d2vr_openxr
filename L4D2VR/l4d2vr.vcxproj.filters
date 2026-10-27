@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup>
     <Filter Include="Source Files">
@@ -60,6 +60,15 @@
     <ClInclude Include="vr.h">
       <Filter>Source Files</Filter>
     </ClInclude>
+    <ClInclude Include="vr_api.h">
+      <Filter>Source Files</Filter>
+    </ClInclude>
+    <ClInclude Include="openxr_bridge_protocol.h">
+      <Filter>Source Files</Filter>
+    </ClInclude>
+    <ClInclude Include="openxr_helper_bridge.h">
+      <Filter>Source Files</Filter>
+    </ClInclude>
     <ClInclude Include="hooks.h">
       <Filter>Source Files</Filter>
     </ClInclude>
@@ -92,9 +101,6 @@
     </ClInclude>
     <ClInclude Include="sdk\sdk_server.h">
       <Filter>Source Files</Filter>
-    </ClInclude>
-    <ClInclude Include="..\dxvk_new\include\openvr\openvr.hpp">
-      <Filter>dxvk</Filter>
     </ClInclude>
     <ClInclude Include="..\dxvk_new\include\shaders\d3d9_convert_a2w10v10u10.h">
       <Filter>dxvk</Filter>
@@ -621,9 +627,6 @@
     <ClInclude Include="..\dxvk_new\src\dxvk\dxvk_objects.h">
       <Filter>dxvk</Filter>
     </ClInclude>
-    <ClInclude Include="..\dxvk_new\src\dxvk\dxvk_openvr.h">
-      <Filter>dxvk</Filter>
-    </ClInclude>
     <ClInclude Include="..\dxvk_new\src\dxvk\dxvk_openxr.h">
       <Filter>dxvk</Filter>
     </ClInclude>
@@ -873,6 +876,12 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="vr.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="vr_openxr_helper.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="openxr_helper_bridge.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="vr_hands\vr_hand_asset_loader.cpp">
@@ -1143,9 +1152,6 @@
       <Filter>dxvk</Filter>
     </ClCompile>
     <ClCompile Include="..\dxvk_new\src\dxvk\dxvk_meta_resolve.cpp">
-      <Filter>dxvk</Filter>
-    </ClCompile>
-    <ClCompile Include="..\dxvk_new\src\dxvk\dxvk_openvr.cpp">
       <Filter>dxvk</Filter>
     </ClCompile>
     <ClCompile Include="..\dxvk_new\src\dxvk\dxvk_openxr.cpp">

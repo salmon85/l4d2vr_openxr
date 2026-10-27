@@ -10,7 +10,7 @@
 #ifdef max
 #undef max
 #endif
-#include "openvr.h"
+#include "vr_api.h"
 #include "vector.h"
 #include "vr_hands/vr_hand_types.h"
 #include <cstdint>
@@ -114,16 +114,16 @@ struct VRWorldPoseTrackingSnapshot
 
 struct SharedTextureHolder
 {
-	vr::VRVulkanTextureData_t m_VulkanData{};
-	vr::Texture_t m_VRTexture{};
+	xr::VRVulkanTextureData_t m_VulkanData{};
+	xr::Texture_t m_VRTexture{};
 };
 
 using TextureStateMutex = std::recursive_mutex;
 
 struct PendingOverlayTextureBind
 {
-	vr::VROverlayHandle_t overlay = vr::k_ulOverlayHandleInvalid;
-	const vr::Texture_t* texture = nullptr;
+	xr::VROverlayHandle_t overlay = xr::k_ulOverlayHandleInvalid;
+	const xr::Texture_t* texture = nullptr;
 	IDirect3DSurface9* surface = nullptr;
 	bool hideOnFailure = false;
 };
@@ -135,8 +135,8 @@ struct PendingOverlayTextureBindBatch
 	size_t count = 0;
 
 	bool Stage(
-		vr::VROverlayHandle_t overlay,
-		const vr::Texture_t* texture,
+		xr::VROverlayHandle_t overlay,
+		const xr::Texture_t* texture,
 		IDirect3DSurface9* surface = nullptr,
 		bool hideOnFailure = false)
 	{
@@ -158,11 +158,11 @@ struct PendingOverlayTextureBindBatch
 // before replacing or destroying the backing submit surfaces.
 struct QueuedCompositorSubmitJob
 {
-	vr::Texture_t leftTexture{};
-	vr::Texture_t rightTexture{};
-	vr::VRTextureBounds_t leftBounds{};
-	vr::VRTextureBounds_t rightBounds{};
-	vr::HmdMatrix34_t renderHmdPose{};
+	xr::Texture_t leftTexture{};
+	xr::Texture_t rightTexture{};
+	xr::VRTextureBounds_t leftBounds{};
+	xr::VRTextureBounds_t rightBounds{};
+	xr::HmdMatrix34_t renderHmdPose{};
 	bool hasLeftBounds = false;
 	bool hasRightBounds = false;
 	bool useRenderPose = false;
@@ -183,8 +183,8 @@ struct CustomActionBinding
 
 struct LeftHandedMirroredActionSource
 {
-	vr::VRActionHandle_t action = vr::k_ulInvalidActionHandle;
-	vr::VRInputValueHandle_t restrictToDevice = vr::k_ulInvalidInputValueHandle;
+	xr::VRActionHandle_t action = xr::k_ulInvalidActionHandle;
+	xr::VRInputValueHandle_t restrictToDevice = xr::k_ulInvalidInputValueHandle;
 };
 
 struct LeftHandedDigitalActionFrameCache
@@ -193,14 +193,14 @@ struct LeftHandedDigitalActionFrameCache
 	bool dataValid = false;
 	bool previousStateValid = false;
 	bool previousState = false;
-	vr::InputDigitalActionData_t data{};
+	xr::InputDigitalActionData_t data{};
 };
 
 struct LeftHandedAnalogActionFrameCache
 {
 	uint64_t frameSerial = 0;
 	bool dataValid = false;
-	vr::InputAnalogActionData_t data{};
+	xr::InputAnalogActionData_t data{};
 };
 
 struct WeaponHapticsProfile
@@ -322,23 +322,23 @@ class VR
 public:
 	Game* m_Game = nullptr;
 
-	vr::IVRSystem* m_System = nullptr;
-	vr::IVRInput* m_Input = nullptr;
-	vr::IVROverlay* m_Overlay = nullptr;
-	vr::IVRCompositor* m_Compositor = nullptr;
+	xr::System* m_System = nullptr;
+	xr::Input* m_Input = nullptr;
+	xr::Overlay* m_Overlay = nullptr;
+	xr::Compositor* m_Compositor = nullptr;
 
-	vr::VROverlayHandle_t m_MainMenuHandle;
-	vr::VROverlayHandle_t m_HUDTopHandle;
-	std::array<vr::VROverlayHandle_t, 4> m_HUDBottomHandles{};
+	xr::VROverlayHandle_t m_MainMenuHandle;
+	xr::VROverlayHandle_t m_HUDTopHandle;
+	std::array<xr::VROverlayHandle_t, 4> m_HUDBottomHandles{};
 	// Gun-mounted scope overlay (render-to-texture lens)
-	vr::VROverlayHandle_t m_ScopeHandle = vr::k_ulOverlayHandleInvalid;
+	xr::VROverlayHandle_t m_ScopeHandle = xr::k_ulOverlayHandleInvalid;
 	// Rear mirror overlay (off-hand)
-	vr::VROverlayHandle_t m_RearMirrorHandle = vr::k_ulOverlayHandleInvalid;
+	xr::VROverlayHandle_t m_RearMirrorHandle = xr::k_ulOverlayHandleInvalid;
 	// Hand HUD overlays (raw, controller-anchored)
-	vr::VROverlayHandle_t m_LeftWristHudHandle = vr::k_ulOverlayHandleInvalid;
-	vr::VROverlayHandle_t m_RightAmmoHudHandle = vr::k_ulOverlayHandleInvalid;
+	xr::VROverlayHandle_t m_LeftWristHudHandle = xr::k_ulOverlayHandleInvalid;
+	xr::VROverlayHandle_t m_RightAmmoHudHandle = xr::k_ulOverlayHandleInvalid;
 	// Standalone in-game HUD alert panel for special infected intent sense.
-	vr::VROverlayHandle_t m_SpecialInfectedIntentSenseHudHandle = vr::k_ulOverlayHandleInvalid;
+	xr::VROverlayHandle_t m_SpecialInfectedIntentSenseHudHandle = xr::k_ulOverlayHandleInvalid;
 
 
 	float m_HorizontalOffsetLeft;
@@ -350,6 +350,8 @@ public:
 	uint32_t m_RenderHeight;
 	uint32_t m_AntiAliasing = 0;
 	bool m_ReShadeVRCompat = false;
+	// True while the 32-bit game is publishing to the x64 OpenXR helper.
+	bool m_OpenXrHelperBridgeActive = false;
 	bool m_EyeRenderTargetMatchProjectionAspect = false;
 	float m_Aspect;
 	float m_Fov;
@@ -371,8 +373,8 @@ public:
 	std::atomic<float> m_VRNearClipEffective{ 0.8f };
 	std::atomic<float> m_VRNearClipClosestCharacterDistance{ -1.0f };
 
-	vr::VRTextureBounds_t m_TextureBounds[2];
-	vr::TrackedDevicePose_t m_Poses[vr::k_unMaxTrackedDeviceCount];
+	xr::VRTextureBounds_t m_TextureBounds[2];
+	xr::TrackedDevicePose_t m_Poses[xr::k_unMaxTrackedDeviceCount];
 
 	Vector m_EyeToHeadTransformPosLeft = { 0,0,0 };
 	Vector m_EyeToHeadTransformPosRight = { 0,0,0 };
@@ -417,6 +419,10 @@ public:
 	Vector m_SetupOriginToHMD = { 0,0,0 };
 
 	float m_HeightOffset = 0.0;
+	// Manual vertical camera offset in meters. Positive values raise the whole
+	// VR rig (view, hands, HUD) relative to the game's eye origin. Intended for
+	// seated play or when the authored eye height feels too low.
+	float m_CameraHeightOffsetMeters = 0.0f;
 	static constexpr uint32_t kResetPositionStableFramesRequired = 8;
 	std::atomic<uint32_t> m_ResetPositionStableFrames{ 0 };
 	std::atomic<uint32_t> m_ResetPositionDeferredPending{ 0 };
@@ -647,7 +653,7 @@ public:
 	std::atomic<bool> m_PoseWaiterStarted{ false };
 	std::atomic<bool> m_PoseWaiterEnabled{ false };
 	std::atomic<uint32_t> m_PoseWaiterSeq{ 0 };
-	std::array<vr::TrackedDevicePose_t, vr::k_unMaxTrackedDeviceCount> m_PoseWaiterPoses{};
+	std::array<xr::TrackedDevicePose_t, xr::k_unMaxTrackedDeviceCount> m_PoseWaiterPoses{};
 
 	HANDLE m_PoseWaiterEvent = NULL;
 	// In queued (mat_queue_mode!=0) rendering, this is the explicit minimum wait budget for a fresher pose
@@ -662,15 +668,15 @@ public:
 	// of waiting for a fresh WaitGetPoses snapshot.
 	bool m_QueuedRenderPoseFromTracking = false;
 	std::atomic<uint32_t> m_QueuedRenderPoseFromTrackingSeq{ 0 };
-	std::atomic<int> m_CachedTrackingUniverseOrigin{ static_cast<int>(vr::TrackingUniverseStanding) };
+	std::atomic<int> m_CachedTrackingUniverseOrigin{ static_cast<int>(xr::TrackingUniverseStanding) };
 	std::atomic<int> m_CachedTrackingPredictionUsec{ 0 };
-	inline vr::ETrackingUniverseOrigin GetCachedTrackingUniverseOrigin() const
+	inline xr::ETrackingUniverseOrigin GetCachedTrackingUniverseOrigin() const
 	{
 		const int origin = m_CachedTrackingUniverseOrigin.load(std::memory_order_acquire);
-		if (origin < static_cast<int>(vr::TrackingUniverseSeated) ||
-			origin > static_cast<int>(vr::TrackingUniverseRawAndUncalibrated))
-			return vr::TrackingUniverseStanding;
-		return static_cast<vr::ETrackingUniverseOrigin>(origin);
+		if (origin < static_cast<int>(xr::TrackingUniverseSeated) ||
+			origin > static_cast<int>(xr::TrackingUniverseRawAndUncalibrated))
+			return xr::TrackingUniverseStanding;
+		return static_cast<xr::ETrackingUniverseOrigin>(origin);
 	}
 	inline void CacheQueuedTrackingPredictionSeconds(float seconds)
 	{
@@ -717,9 +723,9 @@ public:
 		const bool stale = (hz <= 1.0f) || (lastMs == 0) || ((nowMs - lastMs) > 2000u);
 		if ((forceRefresh || stale) && m_System)
 		{
-			vr::ETrackedPropertyError err = vr::TrackedProp_Success;
-			const float v = m_System->GetFloatTrackedDeviceProperty(vr::k_unTrackedDeviceIndex_Hmd, vr::Prop_DisplayFrequency_Float, &err);
-			if (err == vr::TrackedProp_Success && std::isfinite(v) && v > 1.0f && v < 1000.0f)
+			xr::ETrackedPropertyError err = xr::TrackedProp_Success;
+			const float v = m_System->GetFloatTrackedDeviceProperty(xr::k_unTrackedDeviceIndex_Hmd, xr::Prop_DisplayFrequency_Float, &err);
+			if (err == xr::TrackedProp_Success && std::isfinite(v) && v > 1.0f && v < 1000.0f)
 			{
 				hz = v;
 				m_HmdDisplayFrequencyHz.store(hz, std::memory_order_relaxed);
@@ -1225,11 +1231,14 @@ public:
 		Texture_None = -1,
 		Texture_LeftEye,
 		Texture_RightEye,
+		Texture_LeftEyeScene,
+		Texture_RightEyeScene,
 		Texture_LeftEyeSubmit,
 		Texture_RightEyeSubmit,
 		Texture_NekoPostLinearInput,
 		Texture_NekoPostSmallInput,
 		Texture_HUD,
+		Texture_Menu,
 		Texture_Scope,
 		Texture_RearMirror,
 		Texture_DesktopMirror,
@@ -1238,11 +1247,19 @@ public:
 
 	ITexture* m_LeftEyeTexture = nullptr;
 	ITexture* m_RightEyeTexture = nullptr;
+	// Native-sized intermediate targets for the Black Mesa-style working path:
+	// Source renders the stereo scene at its normal client size, then we scale
+	// the completed frame into the full HMD-sized eye textures.
+	ITexture* m_LeftEyeSceneTexture = nullptr;
+	ITexture* m_RightEyeSceneTexture = nullptr;
+	uint32_t m_EyeSceneWidth = 0;
+	uint32_t m_EyeSceneHeight = 0;
 	ITexture* m_LeftEyeSubmitTexture = nullptr;
 	ITexture* m_RightEyeSubmitTexture = nullptr;
 	ITexture* m_NekoPostLinearInputTexture = nullptr;
 	ITexture* m_NekoPostSmallInputTexture = nullptr;
 	ITexture* m_HUDTexture = nullptr;
+	ITexture* m_MenuTexture = nullptr;
 	ITexture* m_ScopeTexture = nullptr;
 	ITexture* m_RearMirrorTexture = nullptr;
 	ITexture* m_DesktopMirrorTexture = nullptr;
@@ -1250,6 +1267,8 @@ public:
 
 	IDirect3DSurface9* m_D9LeftEyeSurface = nullptr;
 	IDirect3DSurface9* m_D9RightEyeSurface = nullptr;
+	IDirect3DSurface9* m_D9LeftEyeSceneSurface = nullptr;
+	IDirect3DSurface9* m_D9RightEyeSceneSurface = nullptr;
 	IDirect3DSurface9* m_D9LeftEyeDepthSurface = nullptr;
 	IDirect3DSurface9* m_D9RightEyeDepthSurface = nullptr;
 	IDirect3DSurface9* m_D9LeftEyeSubmitSurface = nullptr;
@@ -1259,6 +1278,7 @@ public:
 	IDirect3DPixelShader9* m_D9NekoPostOutputTransferPixelShader = nullptr;
 	IDirect3DDevice9* m_D9NekoPostOutputTransferShaderDevice = nullptr;
 	IDirect3DSurface9* m_D9HUDSurface = nullptr;
+	IDirect3DSurface9* m_D9MenuSurface = nullptr;
 	IDirect3DSurface9* m_D9ScopeSurface = nullptr;
 	// GPU-side scope lens post-process surfaces. The raw scope RTT is copied and masked into
 	// a separate processed overlay texture so SteamVR never samples the square RTT directly.
@@ -1277,6 +1297,7 @@ public:
 	SharedTextureHolder m_VKRightEye;
 	SharedTextureHolder m_VKBackBuffer;
 	SharedTextureHolder m_VKHUD;
+	SharedTextureHolder m_VKMenu;
 	SharedTextureHolder m_VKScope;
 	SharedTextureHolder m_VKScopeLens;
 	SharedTextureHolder m_VKRearMirror;
@@ -1353,7 +1374,7 @@ public:
 	std::atomic<uint32_t> m_RenderCompletedPoseToken{ 0 };
 	std::atomic<uint32_t> m_RenderCompletedDuplicatePoseFrameId{ 0 };
 	std::mutex m_RenderCompletedHmdPoseMutex;
-	vr::HmdMatrix34_t m_RenderCompletedHmdPose{};
+	xr::HmdMatrix34_t m_RenderCompletedHmdPose{};
 	bool m_RenderCompletedHmdPoseValid = false;
 	std::atomic<uint32_t> m_LastSubmittedFrameId{ 0 };
 	HANDLE m_RenderFrameReadyEvent = NULL;
@@ -1487,8 +1508,8 @@ public:
 
 	struct ActionCombo
 	{
-		vr::VRActionHandle_t* primary = nullptr;
-		vr::VRActionHandle_t* secondary = nullptr;
+		xr::VRActionHandle_t* primary = nullptr;
+		xr::VRActionHandle_t* secondary = nullptr;
 	};
 
 	ActionCombo m_VoiceRecordCombo{ &m_ActionCrouch, &m_ActionReload };
@@ -1530,58 +1551,58 @@ public:
 	// action sets
 	// /actions/main contains gameplay inputs. /actions/base contains the existing
 	// SteamVR pose, haptic and skeletal bindings used by the independent hand renderer.
-	vr::VRActionSetHandle_t m_ActionSet = vr::k_ulInvalidActionSetHandle;
-	vr::VRActionSetHandle_t m_BaseActionSet = vr::k_ulInvalidActionSetHandle;
-	std::array<vr::VRActiveActionSet_t, 2> m_ActiveActionSets{};
+	xr::VRActionSetHandle_t m_ActionSet = xr::k_ulInvalidActionSetHandle;
+	xr::VRActionSetHandle_t m_BaseActionSet = xr::k_ulInvalidActionSetHandle;
+	std::array<xr::VRActiveActionSet_t, 2> m_ActiveActionSets{};
 
 	// actions
-	vr::VRActionHandle_t m_ActionJump = vr::k_ulInvalidActionHandle;
-	vr::VRActionHandle_t m_ActionPrimaryAttack = vr::k_ulInvalidActionHandle;
-	vr::VRActionHandle_t m_ActionSecondaryAttack = vr::k_ulInvalidActionHandle;
-	vr::VRActionHandle_t m_ActionReload = vr::k_ulInvalidActionHandle;
-	vr::VRActionHandle_t m_ActionWalk = vr::k_ulInvalidActionHandle;
-	vr::VRActionHandle_t m_ActionTurn = vr::k_ulInvalidActionHandle;
-	vr::VRActionHandle_t m_ActionBooleanTurnLeft = vr::k_ulInvalidActionHandle;
-	vr::VRActionHandle_t m_ActionBooleanTurnRight = vr::k_ulInvalidActionHandle;
-	vr::VRActionHandle_t m_ActionUse = vr::k_ulInvalidActionHandle;
-	vr::VRActionHandle_t m_ActionTeleport = vr::k_ulInvalidActionHandle;
-	vr::VRActionHandle_t m_ActionNextItem = vr::k_ulInvalidActionHandle;
-	vr::VRActionHandle_t m_ActionPrevItem = vr::k_ulInvalidActionHandle;
-	vr::VRActionHandle_t m_ActionResetPosition = vr::k_ulInvalidActionHandle;
-	vr::VRActionHandle_t m_ActionCrouch = vr::k_ulInvalidActionHandle;
-	vr::VRActionHandle_t m_ActionFlashlight = vr::k_ulInvalidActionHandle;
-	vr::VRActionHandle_t m_ActionInventoryGripLeft = vr::k_ulInvalidActionHandle;
-	vr::VRActionHandle_t m_ActionInventoryGripRight = vr::k_ulInvalidActionHandle;
-	vr::VRActionHandle_t m_ActionInventoryQuickSwitch = vr::k_ulInvalidActionHandle;
-	vr::VRActionHandle_t m_ActionSpecialInfectedAutoAimToggle = vr::k_ulInvalidActionHandle;
-	vr::VRActionHandle_t m_ActionSpecialInfectedDodgeToggle = vr::k_ulInvalidActionHandle;
-	vr::VRActionHandle_t m_ActionLedgeGuardToggle = vr::k_ulInvalidActionHandle;
-	vr::VRActionHandle_t m_ActionEffectiveAttackRangeAutoFireToggle = vr::k_ulInvalidActionHandle;
-	vr::VRActionHandle_t m_ActionSpeechToText = vr::k_ulInvalidActionHandle;
-	vr::VRActionHandle_t m_ActionActivateVR = vr::k_ulInvalidActionHandle;
-	vr::VRActionHandle_t m_MenuSelect = vr::k_ulInvalidActionHandle;
-	vr::VRActionHandle_t m_MenuBack = vr::k_ulInvalidActionHandle;
-	vr::VRActionHandle_t m_MenuUp = vr::k_ulInvalidActionHandle;
-	vr::VRActionHandle_t m_MenuDown = vr::k_ulInvalidActionHandle;
-	vr::VRActionHandle_t m_MenuLeft = vr::k_ulInvalidActionHandle;
-	vr::VRActionHandle_t m_MenuRight = vr::k_ulInvalidActionHandle;
-	vr::VRActionHandle_t m_Spray = vr::k_ulInvalidActionHandle;
-	vr::VRActionHandle_t m_Scoreboard = vr::k_ulInvalidActionHandle;
-	vr::VRActionHandle_t m_ToggleHUD = vr::k_ulInvalidActionHandle;
-	vr::VRActionHandle_t m_Pause = vr::k_ulInvalidActionHandle;
-	vr::VRActionHandle_t m_NonVRServerMovementAngleToggle = vr::k_ulInvalidActionHandle;
-	vr::VRActionHandle_t m_CustomAction1 = vr::k_ulInvalidActionHandle;
-	vr::VRActionHandle_t m_CustomAction2 = vr::k_ulInvalidActionHandle;
-	vr::VRActionHandle_t m_CustomAction3 = vr::k_ulInvalidActionHandle;
-	vr::VRActionHandle_t m_CustomAction4 = vr::k_ulInvalidActionHandle;
-	vr::VRActionHandle_t m_CustomAction5 = vr::k_ulInvalidActionHandle;
-	vr::VRActionHandle_t m_ActionScopeToggle = vr::k_ulInvalidActionHandle;
-	std::unordered_map<vr::VRActionHandle_t, std::vector<LeftHandedMirroredActionSource>> m_LeftHandedDigitalActionSwapMap;
-	std::unordered_map<vr::VRActionHandle_t, std::vector<LeftHandedMirroredActionSource>> m_LeftHandedAnalogActionSwapMap;
-	std::unordered_set<vr::VRActionHandle_t> m_LeftHandedDigitalHandBoundActions;
-	std::unordered_set<vr::VRActionHandle_t> m_LeftHandedAnalogHandBoundActions;
-	std::unordered_map<vr::VRActionHandle_t, LeftHandedDigitalActionFrameCache> m_LeftHandedDigitalActionFrameCache;
-	std::unordered_map<vr::VRActionHandle_t, LeftHandedAnalogActionFrameCache> m_LeftHandedAnalogActionFrameCache;
+	xr::VRActionHandle_t m_ActionJump = xr::k_ulInvalidActionHandle;
+	xr::VRActionHandle_t m_ActionPrimaryAttack = xr::k_ulInvalidActionHandle;
+	xr::VRActionHandle_t m_ActionSecondaryAttack = xr::k_ulInvalidActionHandle;
+	xr::VRActionHandle_t m_ActionReload = xr::k_ulInvalidActionHandle;
+	xr::VRActionHandle_t m_ActionWalk = xr::k_ulInvalidActionHandle;
+	xr::VRActionHandle_t m_ActionTurn = xr::k_ulInvalidActionHandle;
+	xr::VRActionHandle_t m_ActionBooleanTurnLeft = xr::k_ulInvalidActionHandle;
+	xr::VRActionHandle_t m_ActionBooleanTurnRight = xr::k_ulInvalidActionHandle;
+	xr::VRActionHandle_t m_ActionUse = xr::k_ulInvalidActionHandle;
+	xr::VRActionHandle_t m_ActionTeleport = xr::k_ulInvalidActionHandle;
+	xr::VRActionHandle_t m_ActionNextItem = xr::k_ulInvalidActionHandle;
+	xr::VRActionHandle_t m_ActionPrevItem = xr::k_ulInvalidActionHandle;
+	xr::VRActionHandle_t m_ActionResetPosition = xr::k_ulInvalidActionHandle;
+	xr::VRActionHandle_t m_ActionCrouch = xr::k_ulInvalidActionHandle;
+	xr::VRActionHandle_t m_ActionFlashlight = xr::k_ulInvalidActionHandle;
+	xr::VRActionHandle_t m_ActionInventoryGripLeft = xr::k_ulInvalidActionHandle;
+	xr::VRActionHandle_t m_ActionInventoryGripRight = xr::k_ulInvalidActionHandle;
+	xr::VRActionHandle_t m_ActionInventoryQuickSwitch = xr::k_ulInvalidActionHandle;
+	xr::VRActionHandle_t m_ActionSpecialInfectedAutoAimToggle = xr::k_ulInvalidActionHandle;
+	xr::VRActionHandle_t m_ActionSpecialInfectedDodgeToggle = xr::k_ulInvalidActionHandle;
+	xr::VRActionHandle_t m_ActionLedgeGuardToggle = xr::k_ulInvalidActionHandle;
+	xr::VRActionHandle_t m_ActionEffectiveAttackRangeAutoFireToggle = xr::k_ulInvalidActionHandle;
+	xr::VRActionHandle_t m_ActionSpeechToText = xr::k_ulInvalidActionHandle;
+	xr::VRActionHandle_t m_ActionActivateVR = xr::k_ulInvalidActionHandle;
+	xr::VRActionHandle_t m_MenuSelect = xr::k_ulInvalidActionHandle;
+	xr::VRActionHandle_t m_MenuBack = xr::k_ulInvalidActionHandle;
+	xr::VRActionHandle_t m_MenuUp = xr::k_ulInvalidActionHandle;
+	xr::VRActionHandle_t m_MenuDown = xr::k_ulInvalidActionHandle;
+	xr::VRActionHandle_t m_MenuLeft = xr::k_ulInvalidActionHandle;
+	xr::VRActionHandle_t m_MenuRight = xr::k_ulInvalidActionHandle;
+	xr::VRActionHandle_t m_Spray = xr::k_ulInvalidActionHandle;
+	xr::VRActionHandle_t m_Scoreboard = xr::k_ulInvalidActionHandle;
+	xr::VRActionHandle_t m_ToggleHUD = xr::k_ulInvalidActionHandle;
+	xr::VRActionHandle_t m_Pause = xr::k_ulInvalidActionHandle;
+	xr::VRActionHandle_t m_NonVRServerMovementAngleToggle = xr::k_ulInvalidActionHandle;
+	xr::VRActionHandle_t m_CustomAction1 = xr::k_ulInvalidActionHandle;
+	xr::VRActionHandle_t m_CustomAction2 = xr::k_ulInvalidActionHandle;
+	xr::VRActionHandle_t m_CustomAction3 = xr::k_ulInvalidActionHandle;
+	xr::VRActionHandle_t m_CustomAction4 = xr::k_ulInvalidActionHandle;
+	xr::VRActionHandle_t m_CustomAction5 = xr::k_ulInvalidActionHandle;
+	xr::VRActionHandle_t m_ActionScopeToggle = xr::k_ulInvalidActionHandle;
+	std::unordered_map<xr::VRActionHandle_t, std::vector<LeftHandedMirroredActionSource>> m_LeftHandedDigitalActionSwapMap;
+	std::unordered_map<xr::VRActionHandle_t, std::vector<LeftHandedMirroredActionSource>> m_LeftHandedAnalogActionSwapMap;
+	std::unordered_set<xr::VRActionHandle_t> m_LeftHandedDigitalHandBoundActions;
+	std::unordered_set<xr::VRActionHandle_t> m_LeftHandedAnalogHandBoundActions;
+	std::unordered_map<xr::VRActionHandle_t, LeftHandedDigitalActionFrameCache> m_LeftHandedDigitalActionFrameCache;
+	std::unordered_map<xr::VRActionHandle_t, LeftHandedAnalogActionFrameCache> m_LeftHandedAnalogActionFrameCache;
 	std::chrono::steady_clock::time_point m_LeftHandedInputSwapNextRefresh{};
 	uint64_t m_LeftHandedInputBindingHash = 0;
 	uint64_t m_InputActionStateFrameSerial = 0;
@@ -1829,8 +1850,8 @@ public:
 	Vector m_NativeViewmodelLeftHandOpenVRThumbRootRotationOffsetDeg = { 0.0f, 0.0f, 0.0f };
 	Vector m_NativeViewmodelRightHandOpenVRThumbRootOffsetUnits = { 0.0f, 0.0f, 0.0f };
 	Vector m_NativeViewmodelRightHandOpenVRThumbRootRotationOffsetDeg = { 0.0f, 0.0f, 0.0f };
-	vr::VRActionHandle_t m_NativeViewmodelLeftHandOpenVRAction = vr::k_ulInvalidActionHandle;
-	mutable vr::VRActionHandle_t m_NativeViewmodelRightHandOpenVRAction = vr::k_ulInvalidActionHandle;
+	xr::VRActionHandle_t m_NativeViewmodelLeftHandOpenVRAction = xr::k_ulInvalidActionHandle;
+	mutable xr::VRActionHandle_t m_NativeViewmodelRightHandOpenVRAction = xr::k_ulInvalidActionHandle;
 	mutable std::mutex m_NativeViewmodelLeftHandOpenVRFingerCurlMutex;
 	std::array<float, 5> m_NativeViewmodelLeftHandOpenVRFingerCurls = { 0.0f, 0.0f, 0.0f, 0.0f, 0.0f };
 	std::chrono::steady_clock::time_point m_NativeViewmodelLeftHandOpenVRFingerCurlsAt{};
@@ -2456,6 +2477,8 @@ public:
 
 	// One-shot menu ConVar injection: apply launch-style visual defaults after the first main-menu entry.
 	bool m_MainMenuOneShotVisualCvarsInjected = false;
+	int m_MenuWindowResizeAttempts = 0;
+	ULONGLONG m_LastMenuWindowResizeMs = 0;
 
 	// Optional persisted video.txt profile for VR. Applied once when enabled and again after returning to the main menu.
 	bool m_VrRecommendedVideoSettingsEnabled = false;
@@ -2872,7 +2895,7 @@ public:
 
 
 	// Aim-line friendly-fire guard (client-side fire suppression)
-	vr::VRActionHandle_t m_ActionFriendlyFireBlockToggle = vr::k_ulInvalidActionHandle;
+	xr::VRActionHandle_t m_ActionFriendlyFireBlockToggle = xr::k_ulInvalidActionHandle;
 	bool m_BlockFireOnFriendlyAimEnabled = false; // toggled by SteamVR binding
 	bool m_AimLineHitsFriendly = false;           // updated from a ray trace (aim ray)
 	// Extra radius (meters) for the friendly-fire aim guard trace.
@@ -2932,7 +2955,7 @@ public:
 
 	struct KillIndicatorOverlaySlot
 	{
-		vr::VROverlayHandle_t overlayHandle = vr::k_ulOverlayHandleInvalid;
+		xr::VROverlayHandle_t overlayHandle = xr::k_ulOverlayHandleInvalid;
 		int materialIndex = -1;
 		bool visible = false;
 	};
@@ -3880,18 +3903,18 @@ public:
 	bool QueueQueuedCompositorSubmit(const QueuedCompositorSubmitJob& job);
 	bool WaitForQueuedCompositorSubmit(DWORD timeoutMs = INFINITE);
 	void QueuedCompositorSubmitThreadMain();
-	vr::EVROverlayError SetOverlayTextureSynchronized(
-		vr::IVROverlay* overlay,
-		vr::VROverlayHandle_t overlayHandle,
-		const vr::Texture_t* texture,
+	xr::EVROverlayError SetOverlayTextureSynchronized(
+		xr::Overlay* overlay,
+		xr::VROverlayHandle_t overlayHandle,
+		const xr::Texture_t* texture,
 		bool producerPrepared);
 	void InvalidateSourceRenderQueueMarkers();
 	bool QueueSourceRenderOwnershipAcquireMarker(IMatRenderContext* renderContext);
 	bool QueueSourceRenderOwnershipReleaseMarker(IMatRenderContext* renderContext, bool releaseSourceFrameOwnership);
-	bool QueueSourceRenderCompletionMarker(IMatRenderContext* renderContext, uint32_t renderPoseToken, uint32_t renderFrameSeq, bool allowDuplicatePoseSubmit, bool releaseSourceFrameOwnership, const vr::HmdMatrix34_t* renderHmdPose = nullptr);
-	void PublishSourceQueueCompletedFrame(uint32_t sourceQueueEpoch, uint32_t renderPoseToken, uint32_t renderFrameSeq, bool allowDuplicatePoseSubmit, uint32_t sourceQueueMarkerId, const vr::HmdMatrix34_t* renderHmdPose = nullptr);
-	uint32_t PublishRenderCompletedFrame(uint32_t renderPoseToken, uint32_t renderFrameSeq, bool allowDuplicatePoseSubmit, const char* sourceTag, uint32_t sourceQueueMarkerId = 0, const vr::HmdMatrix34_t* renderHmdPose = nullptr);
-	void LogCompositorError(const char* action, vr::EVRCompositorError error);
+	bool QueueSourceRenderCompletionMarker(IMatRenderContext* renderContext, uint32_t renderPoseToken, uint32_t renderFrameSeq, bool allowDuplicatePoseSubmit, bool releaseSourceFrameOwnership, const xr::HmdMatrix34_t* renderHmdPose = nullptr);
+	void PublishSourceQueueCompletedFrame(uint32_t sourceQueueEpoch, uint32_t renderPoseToken, uint32_t renderFrameSeq, bool allowDuplicatePoseSubmit, uint32_t sourceQueueMarkerId, const xr::HmdMatrix34_t* renderHmdPose = nullptr);
+	uint32_t PublishRenderCompletedFrame(uint32_t renderPoseToken, uint32_t renderFrameSeq, bool allowDuplicatePoseSubmit, const char* sourceTag, uint32_t sourceQueueMarkerId = 0, const xr::HmdMatrix34_t* renderHmdPose = nullptr);
+	void LogCompositorError(const char* action, xr::EVRCompositorError error);
 	void RepositionOverlays();
 	void UpdateHudLiftGestureState(bool inGame);
 	bool IsGameplayHudRequested() const;
@@ -3919,11 +3942,11 @@ public:
 	void SendVirtualKeyDown(WORD virtualKey);
 	void SendVirtualKeyUp(WORD virtualKey);
 	void SendFunctionKey(WORD virtualKey);
-	VMatrix VMatrixFromHmdMatrix(const vr::HmdMatrix34_t& hmdMat);
-	vr::HmdMatrix34_t VMatrixToHmdMatrix(const VMatrix& vMat);
-	vr::HmdMatrix34_t GetControllerTipMatrix(vr::ETrackedControllerRole controllerRole);
-	vr::HmdMatrix34_t BuildThirdPersonSubmitPose() const;
-	bool CheckOverlayIntersectionForController(vr::VROverlayHandle_t overlayHandle, vr::ETrackedControllerRole controllerRole);
+	VMatrix VMatrixFromHmdMatrix(const xr::HmdMatrix34_t& hmdMat);
+	xr::HmdMatrix34_t VMatrixToHmdMatrix(const VMatrix& vMat);
+	xr::HmdMatrix34_t GetControllerTipMatrix(xr::ETrackedControllerRole controllerRole);
+	xr::HmdMatrix34_t BuildThirdPersonSubmitPose() const;
+	bool CheckOverlayIntersectionForController(xr::VROverlayHandle_t overlayHandle, xr::ETrackedControllerRole controllerRole);
 	QAngle GetLeftControllerAbsAngle();
 	Vector GetLeftControllerAbsPos();
 	QAngle GetRightControllerAbsAngle();
@@ -3974,22 +3997,22 @@ public:
 	bool IsDeathFirstPersonLockActive() const;
 	// Map-load / reconnect cooldown: suppress observer-driven 3P latching for a short window.
 	bool IsThirdPersonMapLoadCooldownActive() const;
-	bool PressedDigitalAction(vr::VRActionHandle_t& actionHandle, bool checkIfActionChanged = false);
-	bool GetDigitalActionData(vr::VRActionHandle_t& actionHandle, vr::InputDigitalActionData_t& digitalDataOut);
-	bool GetAnalogActionData(vr::VRActionHandle_t& actionHandle, vr::InputAnalogActionData_t& analogDataOut);
+	bool PressedDigitalAction(xr::VRActionHandle_t& actionHandle, bool checkIfActionChanged = false);
+	bool GetDigitalActionData(xr::VRActionHandle_t& actionHandle, xr::InputDigitalActionData_t& digitalDataOut);
+	bool GetAnalogActionData(xr::VRActionHandle_t& actionHandle, xr::InputAnalogActionData_t& analogDataOut);
 	void RefreshLeftHandedInputActionSwapMaps(bool force = false);
-	bool GetLeftHandedMirroredDigitalActionData(vr::VRActionHandle_t actionHandle, vr::InputDigitalActionData_t& digitalDataOut);
-	bool GetLeftHandedMirroredAnalogActionData(vr::VRActionHandle_t actionHandle, vr::InputAnalogActionData_t& analogDataOut);
+	bool GetLeftHandedMirroredDigitalActionData(xr::VRActionHandle_t actionHandle, xr::InputDigitalActionData_t& digitalDataOut);
+	bool GetLeftHandedMirroredAnalogActionData(xr::VRActionHandle_t actionHandle, xr::InputAnalogActionData_t& analogDataOut);
 	void ResetPosition();
-	void GetPoseData(vr::TrackedDevicePose_t& poseRaw, TrackedDevicePoseData& poseOut);
+	void GetPoseData(xr::TrackedDevicePose_t& poseRaw, TrackedDevicePoseData& poseOut);
 	void PoseWaiterThreadMain();
-	bool ReadPoseWaiterSnapshot(vr::TrackedDevicePose_t* outPoses, uint32_t* outSeq = nullptr) const;
+	bool ReadPoseWaiterSnapshot(xr::TrackedDevicePose_t* outPoses, uint32_t* outSeq = nullptr) const;
 	bool ReadWorldPoseTrackingSnapshot(VRWorldPoseTrackingSnapshot& outSnapshot) const;
 	// Maps the project's gameplay hand through the LeftHanded setting.
 	bool IsGameplayHandLeftPhysical(bool leftHand) const;
 	// leftHand selects the physical OpenVR controller role.
-	vr::TrackedDeviceIndex_t GetPhysicalControllerIndexForHand(bool leftHand) const;
-	void TriggerLegacyHapticPulse(vr::TrackedDeviceIndex_t deviceIndex, float durationSeconds, float amplitude) const;
+	xr::TrackedDeviceIndex_t GetPhysicalControllerIndexForHand(bool leftHand) const;
+	void TriggerLegacyHapticPulse(xr::TrackedDeviceIndex_t deviceIndex, float durationSeconds, float amplitude) const;
 	void TriggerPhysicalHandHapticPulse(bool leftHand, float durationSeconds, float frequency, float amplitude, int priority = 1);
 	void FlushHapticMixer();
 	WeaponHapticsProfile GetWeaponHapticsProfile(int weaponId) const;
@@ -4130,7 +4153,7 @@ public:
 	int FindReusableKillIndicatorIndex(bool preferNonKill) const;
 	void AddOrRecycleKillIndicator(const Vector& worldPos, bool killConfirmed, bool headshot, std::chrono::steady_clock::time_point now, bool preferNonKill);
 	bool BuildKillIndicatorOverlayPixels(IMaterial* material, std::vector<uint8_t>& outPixels, uint32_t& outWidth, uint32_t& outHeight, uint32_t preferredFrameIndex = UINT32_MAX, bool* outUsedDecodedFrames = nullptr);
-	bool ComputeKillIndicatorOverlayTransform(const Vector& worldPos, vr::HmdMatrix34_t& outTransform) const;
+	bool ComputeKillIndicatorOverlayTransform(const Vector& worldPos, xr::HmdMatrix34_t& outTransform) const;
 	// Mounted gun helper: returns the entity the player is currently "using" (turret/mounted gun) if any.
 	// Used to skip that entity in aim-related traces so the aim line doesn't collide with the gun platform.
 	bool IsUsingMountedGun(const C_BasePlayer* localPlayer) const;

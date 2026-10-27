@@ -29,3 +29,15 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+## OpenXR headers
+
+`thirdparty/openxr/include/openxr` contains the Khronos OpenXR API headers
+(OpenXR 1.1.61).
+
+- Project: https://github.com/KhronosGroup/OpenXR-SDK
+- License: Apache License 2.0 OR MIT (SPDX: `Apache-2.0 OR MIT`)
+- Copyright (c) 2017-2026 The Khronos Group Inc.
+
+The OpenXR loader (`openxr_loader.dll`) is a runtime/deployment dependency and
+is not bundled with this repository.

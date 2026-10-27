@@ -1,6 +1,6 @@
 #pragma once
 
-#include "openvr.h"
+#include "vr_api.h"
 #include "vr_hand_types.h"
 
 #include <memory>
@@ -16,8 +16,8 @@ public:
     VrHandSkeletonRuntime(const VrHandSkeletonRuntime&) = delete;
     VrHandSkeletonRuntime& operator=(const VrHandSkeletonRuntime&) = delete;
 
-    bool Initialize(vr::IVRInput* input, vr::VRActionHandle_t action, std::string& outError);
-    bool Update(vr::IVRInput* input, vr::EVRSkeletalMotionRange motionRange, std::string& outError);
+    bool Initialize(xr::Input* input, xr::VRActionHandle_t action, std::string& outError);
+    bool Update(xr::Input* input, xr::EVRSkeletalMotionRange motionRange, std::string& outError);
     bool BuildSkinningPalette(
         const VrHandMeshAsset& asset,
         std::vector<VrHandMatrixRows3x4>& outPalette,

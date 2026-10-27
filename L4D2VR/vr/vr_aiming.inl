@@ -4114,18 +4114,18 @@ bool VR::IsGameplayHandLeftPhysical(bool leftHand) const
     return m_LeftHanded ? !leftHand : leftHand;
 }
 
-vr::TrackedDeviceIndex_t VR::GetPhysicalControllerIndexForHand(bool leftHand) const
+xr::TrackedDeviceIndex_t VR::GetPhysicalControllerIndexForHand(bool leftHand) const
 {
     if (!m_System)
-        return vr::k_unTrackedDeviceIndexInvalid;
+        return xr::k_unTrackedDeviceIndexInvalid;
 
     return m_System->GetTrackedDeviceIndexForControllerRole(
-        leftHand ? vr::TrackedControllerRole_LeftHand : vr::TrackedControllerRole_RightHand);
+        leftHand ? xr::TrackedControllerRole_LeftHand : xr::TrackedControllerRole_RightHand);
 }
 
-void VR::TriggerLegacyHapticPulse(vr::TrackedDeviceIndex_t deviceIndex, float durationSeconds, float amplitude) const
+void VR::TriggerLegacyHapticPulse(xr::TrackedDeviceIndex_t deviceIndex, float durationSeconds, float amplitude) const
 {
-    if (!m_System || deviceIndex == vr::k_unTrackedDeviceIndexInvalid || !m_System->IsTrackedDeviceConnected(deviceIndex))
+    if (!m_System || deviceIndex == xr::k_unTrackedDeviceIndexInvalid || !m_System->IsTrackedDeviceConnected(deviceIndex))
         return;
 
     const float safeAmplitude = std::clamp(amplitude, 0.0f, 1.0f);

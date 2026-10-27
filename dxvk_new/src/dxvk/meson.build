@@ -128,7 +128,6 @@ dxvk_src = [
 
 if platform == 'windows'
   dxvk_src += [
-    'dxvk_openvr.cpp',
     'dxvk_openxr.cpp',
   ]
 endif

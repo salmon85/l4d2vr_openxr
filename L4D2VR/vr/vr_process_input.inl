@@ -23,9 +23,9 @@ void VR::ProcessInput()
     m_ScopeFovAdjustSuppressWalk = false;
     m_ScopeFovAdjustingThisFrame = false;
 
-    vr::VROverlay()->SetOverlayFlag(m_HUDTopHandle, vr::VROverlayFlags_MakeOverlaysInteractiveIfVisible, false);
-    for (vr::VROverlayHandle_t& overlay : m_HUDBottomHandles)
-        vr::VROverlay()->SetOverlayFlag(overlay, vr::VROverlayFlags_MakeOverlaysInteractiveIfVisible, false);
+    xr::VROverlay()->SetOverlayFlag(m_HUDTopHandle, xr::VROverlayFlags_MakeOverlaysInteractiveIfVisible, false);
+    for (xr::VROverlayHandle_t& overlay : m_HUDBottomHandles)
+        xr::VROverlay()->SetOverlayFlag(overlay, xr::VROverlayFlags_MakeOverlaysInteractiveIfVisible, false);
 
     typedef std::chrono::duration<float, std::milli> duration;
     auto currentTime = std::chrono::steady_clock::now();
@@ -90,7 +90,7 @@ void VR::ProcessInput()
         return;
     }
 
-    vr::InputDigitalActionData_t teleportActionData{};
+    xr::InputDigitalActionData_t teleportActionData{};
     const bool teleportActionValid = GetDigitalActionData(m_ActionTeleport, teleportActionData);
     if (teleportActionValid && teleportActionData.bChanged)
     {
@@ -100,7 +100,7 @@ void VR::ProcessInput()
             EndTeleportTargeting(true);
     }
 
-    vr::InputAnalogActionData_t analogActionData;
+    xr::InputAnalogActionData_t analogActionData;
 
     if (GetAnalogActionData(m_ActionTurn, analogActionData))
     {
@@ -282,7 +282,7 @@ void VR::ProcessInput()
     bool scopeAnalogAdjustingNow = false;
     if (scopeFovAdjustAllowed)
     {
-        vr::InputAnalogActionData_t scopeWalkData{};
+        xr::InputAnalogActionData_t scopeWalkData{};
         if (GetAnalogActionData(m_ActionWalk, scopeWalkData))
         {
             constexpr float deadzone = 0.25f;
@@ -362,7 +362,7 @@ void VR::ProcessInput()
         m_UseCmdOwned = false;
     }
 
-    auto getActionState = [&](vr::VRActionHandle_t* handle, vr::InputDigitalActionData_t& data, bool& isDown, bool& justPressed)
+    auto getActionState = [&](xr::VRActionHandle_t* handle, xr::InputDigitalActionData_t& data, bool& isDown, bool& justPressed)
         {
             isDown = false;
             justPressed = false;
@@ -379,8 +379,8 @@ void VR::ProcessInput()
         };
 
     auto getComboStates = [&](const ActionCombo& combo,
-        vr::InputDigitalActionData_t& primaryData,
-        vr::InputDigitalActionData_t& secondaryData,
+        xr::InputDigitalActionData_t& primaryData,
+        xr::InputDigitalActionData_t& secondaryData,
         bool& primaryDown,
         bool& secondaryDown,
         bool& primaryJustPressed,
@@ -406,64 +406,64 @@ void VR::ProcessInput()
     bool suppressCrouch = false;
     bool suppressSecondaryAttack = false;
 
-    auto originMatchesRole = [&](vr::VRInputValueHandle_t origin, vr::ETrackedControllerRole role) -> bool
+    auto originMatchesRole = [&](xr::VRInputValueHandle_t origin, xr::ETrackedControllerRole role) -> bool
         {
             if (!m_Input || !m_System)
                 return false;
-            if (origin == vr::k_ulInvalidInputValueHandle)
+            if (origin == xr::k_ulInvalidInputValueHandle)
                 return false;
 
-            vr::InputOriginInfo_t info{};
-            if (m_Input->GetOriginTrackedDeviceInfo(origin, &info, sizeof(info)) != vr::VRInputError_None)
+            xr::InputOriginInfo_t info{};
+            if (m_Input->GetOriginTrackedDeviceInfo(origin, &info, sizeof(info)) != xr::VRInputError_None)
                 return false;
 
-            const vr::TrackedDeviceIndex_t roleIndex = m_System->GetTrackedDeviceIndexForControllerRole(role);
-            if (roleIndex == vr::k_unTrackedDeviceIndexInvalid)
+            const xr::TrackedDeviceIndex_t roleIndex = m_System->GetTrackedDeviceIndexForControllerRole(role);
+            if (roleIndex == xr::k_unTrackedDeviceIndexInvalid)
                 return false;
 
             return info.trackedDeviceIndex == roleIndex;
         };
-    auto roleForGameplayHand = [&](bool leftHand) -> vr::ETrackedControllerRole
+    auto roleForGameplayHand = [&](bool leftHand) -> xr::ETrackedControllerRole
         {
             return IsGameplayHandLeftPhysical(leftHand)
-                ? vr::TrackedControllerRole_LeftHand
-                : vr::TrackedControllerRole_RightHand;
+                ? xr::TrackedControllerRole_LeftHand
+                : xr::TrackedControllerRole_RightHand;
         };
-    const vr::ETrackedControllerRole gameplayLeftRole = roleForGameplayHand(true);
-    const vr::ETrackedControllerRole gameplayRightRole = roleForGameplayHand(false);
+    const xr::ETrackedControllerRole gameplayLeftRole = roleForGameplayHand(true);
+    const xr::ETrackedControllerRole gameplayRightRole = roleForGameplayHand(false);
 
-    vr::InputDigitalActionData_t primaryAttackActionData{};
+    xr::InputDigitalActionData_t primaryAttackActionData{};
     bool primaryAttackDown = false;
     bool primaryAttackJustPressed = false;
     getActionState(&m_ActionPrimaryAttack, primaryAttackActionData, primaryAttackDown, primaryAttackJustPressed);
     m_PrimaryAttackDown = false;
 
-    vr::InputDigitalActionData_t jumpActionData{};
+    xr::InputDigitalActionData_t jumpActionData{};
     bool jumpButtonDown = false;
     bool jumpJustPressed = false;
     bool jumpDataValid = getActionState(&m_ActionJump, jumpActionData, jumpButtonDown, jumpJustPressed);
 
-    vr::InputDigitalActionData_t useActionData{};
+    xr::InputDigitalActionData_t useActionData{};
     bool useButtonDown = false;
     bool useJustPressed = false;
     getActionState(&m_ActionUse, useActionData, useButtonDown, useJustPressed);
 
-    vr::InputDigitalActionData_t crouchActionData{};
+    xr::InputDigitalActionData_t crouchActionData{};
     bool crouchButtonDown = false;
     bool crouchJustPressed = false;
     bool crouchDataValid = getActionState(&m_ActionCrouch, crouchActionData, crouchButtonDown, crouchJustPressed);
 
-    vr::InputDigitalActionData_t resetActionData{};
+    xr::InputDigitalActionData_t resetActionData{};
     [[maybe_unused]] bool resetButtonDown = false;
     bool resetJustPressed = false;
     bool resetDataValid = getActionState(&m_ActionResetPosition, resetActionData, resetButtonDown, resetJustPressed);
 
-    vr::InputDigitalActionData_t reloadActionData{};
+    xr::InputDigitalActionData_t reloadActionData{};
     bool reloadButtonDown = false;
     bool reloadJustPressed = false;
     bool reloadDataValid = getActionState(&m_ActionReload, reloadActionData, reloadButtonDown, reloadJustPressed);
 
-    vr::InputDigitalActionData_t secondaryAttackActionData{};
+    xr::InputDigitalActionData_t secondaryAttackActionData{};
     bool secondaryAttackActive = false;
     bool secondaryAttackJustPressed = false;
     bool secondaryAttackDataValid = getActionState(
@@ -477,21 +477,21 @@ void VR::ProcessInput()
     const bool reloadFromLeftHand =
         reloadDataValid &&
         (originMatchesRole(reloadActionData.activeOrigin, gameplayLeftRole) ||
-            reloadActionData.activeOrigin == vr::k_ulInvalidInputValueHandle);
+            reloadActionData.activeOrigin == xr::k_ulInvalidInputValueHandle);
     const bool crouchFromLeftHand =
         crouchDataValid &&
         (originMatchesRole(crouchActionData.activeOrigin, gameplayLeftRole) ||
-            crouchActionData.activeOrigin == vr::k_ulInvalidInputValueHandle);
+            crouchActionData.activeOrigin == xr::k_ulInvalidInputValueHandle);
     const bool jumpFromLeftHand =
         jumpDataValid &&
         (originMatchesRole(jumpActionData.activeOrigin, gameplayLeftRole) ||
-            jumpActionData.activeOrigin == vr::k_ulInvalidInputValueHandle);
+            jumpActionData.activeOrigin == xr::k_ulInvalidInputValueHandle);
     const bool secondaryAttackFromLeftHand =
         secondaryAttackDataValid &&
         (originMatchesRole(secondaryAttackActionData.activeOrigin, gameplayLeftRole) ||
-            secondaryAttackActionData.activeOrigin == vr::k_ulInvalidInputValueHandle);
+            secondaryAttackActionData.activeOrigin == xr::k_ulInvalidInputValueHandle);
 
-    vr::InputDigitalActionData_t inventoryQuickSwitchActionData{};
+    xr::InputDigitalActionData_t inventoryQuickSwitchActionData{};
     bool inventoryQuickSwitchDown = false;
     bool inventoryQuickSwitchJustPressed = false;
     bool inventoryQuickSwitchDataValid = getActionState(
@@ -502,13 +502,13 @@ void VR::ProcessInput()
 
     auto actionComesFromGameplayRightHand = [&](
         bool dataValid,
-        const vr::InputDigitalActionData_t& data) -> bool
+        const xr::InputDigitalActionData_t& data) -> bool
         {
             if (!dataValid || !data.bActive)
                 return false;
             return
                 originMatchesRole(data.activeOrigin, gameplayRightRole) ||
-                data.activeOrigin == vr::k_ulInvalidInputValueHandle;
+                data.activeOrigin == xr::k_ulInvalidInputValueHandle;
         };
 
     const bool reloadCatchInputDown =
@@ -749,37 +749,37 @@ void VR::ProcessInput()
     }
     const bool gestureSecondaryAttackActive = m_MotionGesturesEnabled && currentTime < m_SecondaryAttackGestureHoldUntil;
 
-    vr::InputDigitalActionData_t flashlightActionData{};
+    xr::InputDigitalActionData_t flashlightActionData{};
     bool flashlightButtonDown = false;
     bool flashlightJustPressed = false;
     bool flashlightDataValid = getActionState(&m_ActionFlashlight, flashlightActionData, flashlightButtonDown, flashlightJustPressed);
 
-    vr::InputDigitalActionData_t autoAimToggleActionData{};
+    xr::InputDigitalActionData_t autoAimToggleActionData{};
     [[maybe_unused]] bool autoAimToggleDown = false;
     bool autoAimToggleJustPressed = false;
     [[maybe_unused]] bool autoAimToggleDataValid = getActionState(&m_ActionSpecialInfectedAutoAimToggle, autoAimToggleActionData, autoAimToggleDown, autoAimToggleJustPressed);
 
-    vr::InputDigitalActionData_t specialInfectedDodgeToggleActionData{};
+    xr::InputDigitalActionData_t specialInfectedDodgeToggleActionData{};
     [[maybe_unused]] bool specialInfectedDodgeToggleDown = false;
     bool specialInfectedDodgeToggleJustPressed = false;
     [[maybe_unused]] bool specialInfectedDodgeToggleDataValid = getActionState(&m_ActionSpecialInfectedDodgeToggle, specialInfectedDodgeToggleActionData, specialInfectedDodgeToggleDown, specialInfectedDodgeToggleJustPressed);
 
-    vr::InputDigitalActionData_t ledgeGuardToggleActionData{};
+    xr::InputDigitalActionData_t ledgeGuardToggleActionData{};
     [[maybe_unused]] bool ledgeGuardToggleDown = false;
     bool ledgeGuardToggleJustPressed = false;
     [[maybe_unused]] bool ledgeGuardToggleDataValid = getActionState(&m_ActionLedgeGuardToggle, ledgeGuardToggleActionData, ledgeGuardToggleDown, ledgeGuardToggleJustPressed);
 
-    vr::InputDigitalActionData_t effectiveRangeAutoFireToggleActionData{};
+    xr::InputDigitalActionData_t effectiveRangeAutoFireToggleActionData{};
     [[maybe_unused]] bool effectiveRangeAutoFireToggleDown = false;
     bool effectiveRangeAutoFireToggleJustPressed = false;
     [[maybe_unused]] bool effectiveRangeAutoFireToggleDataValid = getActionState(&m_ActionEffectiveAttackRangeAutoFireToggle, effectiveRangeAutoFireToggleActionData, effectiveRangeAutoFireToggleDown, effectiveRangeAutoFireToggleJustPressed);
 
-    vr::InputDigitalActionData_t nonVrServerMovementToggleActionData{};
+    xr::InputDigitalActionData_t nonVrServerMovementToggleActionData{};
     [[maybe_unused]] bool nonVrServerMovementToggleDown = false;
     bool nonVrServerMovementToggleJustPressed = false;
     [[maybe_unused]] bool nonVrServerMovementToggleDataValid = getActionState(&m_NonVRServerMovementAngleToggle, nonVrServerMovementToggleActionData, nonVrServerMovementToggleDown, nonVrServerMovementToggleJustPressed);
 
-    vr::InputDigitalActionData_t scopeToggleActionData{};
+    xr::InputDigitalActionData_t scopeToggleActionData{};
     [[maybe_unused]] bool scopeToggleDown = false;
     bool scopeToggleJustPressed = false;
     [[maybe_unused]] bool scopeToggleDataValid = getActionState(&m_ActionScopeToggle, scopeToggleActionData, scopeToggleDown, scopeToggleJustPressed);
@@ -1208,7 +1208,7 @@ void VR::ProcessInput()
                 return false;
             };
 
-        auto triggerInventoryFromOrigin = [&](vr::VRInputValueHandle_t origin) -> bool
+        auto triggerInventoryFromOrigin = [&](xr::VRInputValueHandle_t origin) -> bool
             {
                 if (originMatchesRole(origin, gameplayRightRole))
                     return triggerInventoryAtPos(m_RightControllerPosAbs);
@@ -1268,8 +1268,8 @@ void VR::ProcessInput()
         }
     }
 
-    auto suppressIfNeeded = [&](const vr::InputDigitalActionData_t& data,
-        vr::ETrackedControllerRole role,
+    auto suppressIfNeeded = [&](const xr::InputDigitalActionData_t& data,
+        xr::ETrackedControllerRole role,
         bool suppressEnabled,
         bool& down,
         bool& justPressed) -> bool
@@ -1480,8 +1480,8 @@ void VR::ProcessInput()
         }
     }
 
-    vr::InputDigitalActionData_t voicePrimaryData{};
-    vr::InputDigitalActionData_t voiceSecondaryData{};
+    xr::InputDigitalActionData_t voicePrimaryData{};
+    xr::InputDigitalActionData_t voiceSecondaryData{};
     bool voicePrimaryDown = false;
     bool voiceSecondaryDown = false;
     bool voicePrimaryJustPressed = false;
@@ -1490,13 +1490,13 @@ void VR::ProcessInput()
         voicePrimaryDown, voiceSecondaryDown, voicePrimaryJustPressed, voiceSecondaryJustPressed);
     const bool voiceComboActive = voiceComboValid && voicePrimaryDown && voiceSecondaryDown;
     const bool voiceComboJustActivated = voiceComboValid && ((voicePrimaryJustPressed && voiceSecondaryDown) || (voiceSecondaryJustPressed && voicePrimaryDown));
-    vr::InputDigitalActionData_t speechToTextActionData{};
+    xr::InputDigitalActionData_t speechToTextActionData{};
     bool speechToTextDown = false;
     bool speechToTextJustPressed = false;
     const bool speechToTextValid = getActionState(&m_ActionSpeechToText, speechToTextActionData, speechToTextDown, speechToTextJustPressed);
 
-    vr::InputDigitalActionData_t quickTurnPrimaryData{};
-    vr::InputDigitalActionData_t quickTurnSecondaryData{};
+    xr::InputDigitalActionData_t quickTurnPrimaryData{};
+    xr::InputDigitalActionData_t quickTurnSecondaryData{};
     bool quickTurnPrimaryDown = false;
     bool quickTurnSecondaryDown = false;
     [[maybe_unused]] bool quickTurnPrimaryJustPressed = false;
@@ -1508,8 +1508,8 @@ void VR::ProcessInput()
         quickTurnComboValid &&
         quickTurnPrimaryDown &&
         quickTurnSecondaryDown;
-    vr::InputDigitalActionData_t viewmodelPrimaryData{};
-    vr::InputDigitalActionData_t viewmodelSecondaryData{};
+    xr::InputDigitalActionData_t viewmodelPrimaryData{};
+    xr::InputDigitalActionData_t viewmodelSecondaryData{};
     bool viewmodelPrimaryDown = false;
     bool viewmodelSecondaryDown = false;
     [[maybe_unused]] bool viewmodelPrimaryJustPressed = false;
@@ -1751,7 +1751,7 @@ void VR::ProcessInput()
             return token;
         };
 
-    auto handleInternalCustomActionCommand = [&](const CustomActionBinding& binding, const vr::InputDigitalActionData_t& actionData) -> bool
+    auto handleInternalCustomActionCommand = [&](const CustomActionBinding& binding, const xr::InputDigitalActionData_t& actionData) -> bool
         {
             const std::string token = extractCommandToken(binding.command);
             if (token.empty())
@@ -1801,9 +1801,9 @@ void VR::ProcessInput()
             return false;
         };
 
-    auto handleCustomAction = [&](vr::VRActionHandle_t& actionHandle, const CustomActionBinding& binding)
+    auto handleCustomAction = [&](xr::VRActionHandle_t& actionHandle, const CustomActionBinding& binding)
         {
-            vr::InputDigitalActionData_t actionData{};
+            xr::InputDigitalActionData_t actionData{};
             if (!GetDigitalActionData(actionHandle, actionData))
                 return;
 
@@ -1864,18 +1864,18 @@ void VR::ProcessInput()
 
     auto showTopHud = [&]()
         {
-            vr::VROverlay()->ShowOverlay(m_HUDTopHandle);
+            xr::VROverlay()->ShowOverlay(m_HUDTopHandle);
         };
 
     auto hideTopHud = [&]()
         {
-            vr::VROverlay()->HideOverlay(m_HUDTopHandle);
+            xr::VROverlay()->HideOverlay(m_HUDTopHandle);
         };
 
     auto hideBottomHud = [&]()
         {
-            for (vr::VROverlayHandle_t& overlay : m_HUDBottomHandles)
-                vr::VROverlay()->HideOverlay(overlay);
+            for (xr::VROverlayHandle_t& overlay : m_HUDBottomHandles)
+                xr::VROverlay()->HideOverlay(overlay);
         };
 
     const bool menuActive = m_Game->m_EngineClient->IsPaused();

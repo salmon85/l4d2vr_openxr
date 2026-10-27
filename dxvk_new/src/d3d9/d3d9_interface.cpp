@@ -6,8 +6,6 @@
 #include "d3d9_bridge.h"
 #include "d3d9_vr.h"
 
-#include <openvr.h>
-
 #include "../util/util_singleton.h"
 
 #include <algorithm>
@@ -322,25 +320,9 @@ namespace dxvk {
       return D3DERR_INVALIDCALL;
 
     const bool noHmd = IsNoHmdLaunchArgPresent();
-    if (!noHmd) {
-      vr::HmdError error = vr::VRInitError_None;
-      vr::IVRSystem* system = vr::VR_Init(&error, vr::VRApplication_Scene);
-
-      if (error == vr::VRInitError_None) {
-        // Override viewport size.
-        uint32_t renderWidth;
-        uint32_t renderHeight;
-        system->GetRecommendedRenderTargetSize(&renderWidth, &renderHeight);
-        pPresentationParameters->BackBufferWidth = renderWidth;
-        pPresentationParameters->BackBufferHeight = renderHeight;
-      } else {
-        char errorString[256];
-        std::snprintf(errorString, 256, "VR_Init failed: %s", vr::VR_GetVRInitErrorAsEnglishDescription(error));
-        MessageBox(0, errorString, "DXVK", MB_ICONERROR | MB_OK);
-        ExitProcess(0);
-      }
-    }
-
+    // The VR backend is now OpenXR and owns its own eye render targets.  Do
+    // not query a VR runtime from D3D9 device creation: the game presentation
+    // size must remain the desktop/window size until the mod starts a session.
     auto result = this->CreateDeviceEx(
       Adapter,
       DeviceType,

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "openvr.h"
+#include "vr_api.h"
 #include "vr_hand_asset_loader.h"
 #include "vr_hand_renderer_d3d9.h"
 #include "vr_hand_skeleton_runtime.h"
@@ -27,7 +27,7 @@ public:
 
     bool DrawForEye(
         IDirect3DDevice9* device,
-        vr::IVRInput* input,
+        xr::Input* input,
         const CViewSetup& view,
         int eyeIndex,
         float vrScale,
@@ -110,7 +110,7 @@ private:
     {
         const char* actionPath = nullptr;
         const char* assetFileName = nullptr;
-        vr::VRActionHandle_t action = vr::k_ulInvalidActionHandle;
+        xr::VRActionHandle_t action = xr::k_ulInvalidActionHandle;
         VrHandMeshAsset asset;
         VrHandSkeletonRuntime skeleton;
         std::vector<VrHandMatrixRows3x4> palette;
@@ -140,7 +140,7 @@ private:
 
     bool EnsureAssetsLoaded(bool debugLog);
     bool EnsureInitialized(
-        vr::IVRInput* input,
+        xr::Input* input,
         bool rightUseViewmodelPose,
         bool twoHandedViewmodelPose,
         bool leftHanded,
@@ -164,7 +164,7 @@ private:
         bool useViewmodelLayer,
         VrHandDrawPass drawPass);
     void UpdatePoses(
-        vr::IVRInput* input,
+        xr::Input* input,
         bool motionRangeWithoutController,
         bool rightUseViewmodelPose,
         bool twoHandedViewmodelPose,

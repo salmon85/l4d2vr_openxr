@@ -167,7 +167,7 @@ namespace
             uint32_t renderFrameSeq,
             bool allowDuplicatePoseSubmit,
             bool releaseSourceFrameOwnership,
-            const vr::HmdMatrix34_t* renderHmdPose)
+            const xr::HmdMatrix34_t* renderHmdPose)
             : m_VR(vr),
             m_Epoch(epoch),
             m_MarkerId(markerId),
@@ -228,7 +228,7 @@ namespace
         uint32_t m_RenderFrameSeq = 0;
         bool m_AllowDuplicatePoseSubmit = false;
         bool m_ReleaseSourceFrameOwnership = false;
-        vr::HmdMatrix34_t m_RenderHmdPose{};
+        xr::HmdMatrix34_t m_RenderHmdPose{};
         bool m_RenderHmdPoseValid = false;
     };
 
@@ -957,20 +957,21 @@ namespace
         const bool cleanTargetReady = (vr->m_DesktopMirrorTexture != nullptr);
         const bool legacyCleanPassSafe = !queuedRendering;
         const bool effective = requested && cleanTargetReady && legacyCleanPassSafe;
-        const bool needRecreate = requested && texturesReady && !vr->m_DesktopMirrorTexture;
+        // Recreating all VR targets from the menu submit path loops because the
+        // desktop-mirror clean target is intentionally not created until gameplay.
+        // Only request a full recreation once gameplay is actually running.
+        const bool inGameForMirror =
+            vr->m_Game && vr->m_Game->m_EngineClient && vr->m_Game->m_EngineClient->IsInGame();
+        const bool needRecreate =
+            inGameForMirror && requested && texturesReady && !vr->m_DesktopMirrorTexture;
 
         const bool changed = (vr->m_DesktopMirrorHidePluginOverlays != effective);
         vr->m_DesktopMirrorHidePluginOverlays = effective;
 
-        // Older builds did not allocate desktopMirrorClean0 while mat_queue_mode was active.
-        // If a live session enters that state, recreate all VR RTs once so the desktop mirror
-        // never points at a missing clean target. Keep the runtime flag false until that happens.
-        if (needRecreate)
-        {
-            std::lock_guard<TextureStateMutex> textureLock(vr->m_TextureMutex);
-            vr->m_CreatedVRTextures.store(false, std::memory_order_release);
-            vr->m_CreatingTextureID = VR::Texture_None;
-        }
+        // Never invalidate the entire VR target set from this heuristic. When the
+        // desktop-mirror clean target is intentionally absent it fires every frame,
+        // recreating every eye/HUD texture continuously and exhausting VRAM/RAM.
+        (void)needRecreate;
 
         if ((changed || needRecreate) && vr->m_RenderPipelineDebugLog)
         {
@@ -1656,6 +1657,51 @@ void VR::Update()
     const bool returnedToMainMenu = s_WasInGameLastUpdate && !inGameAtUpdateStart;
     s_WasInGameLastUpdate = inGameAtUpdateStart;
 
+    if (!inGameAtUpdateStart)
+    {
+        // The boot-time VR swapchain can make the Win32 menu window larger than
+        // the monitor. Shrink it to the monitor work area so the menu is usable.
+        const ULONGLONG nowMs = GetTickCount64();
+        if (m_MenuWindowResizeAttempts < 3 &&
+            (m_LastMenuWindowResizeMs == 0 || nowMs - m_LastMenuWindowResizeMs > 2000))
+        {
+            HWND hwnd = FindFocusMainWindow();
+            if (hwnd)
+            {
+                RECT client{};
+                GetClientRect(hwnd, &client);
+                const int clientW = static_cast<int>(client.right - client.left);
+                const int clientH = static_cast<int>(client.bottom - client.top);
+
+                int targetW = 1920;
+                int targetH = 1080;
+                HMONITOR monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTOPRIMARY);
+                MONITORINFO monitorInfo{};
+                monitorInfo.cbSize = sizeof(monitorInfo);
+                if (GetMonitorInfo(monitor, &monitorInfo))
+                {
+                    targetW = (std::max)(640, static_cast<int>(monitorInfo.rcWork.right - monitorInfo.rcWork.left));
+                    targetH = (std::max)(360, static_cast<int>(monitorInfo.rcWork.bottom - monitorInfo.rcWork.top));
+                }
+
+                if (clientW > 0 && clientH > 0 &&
+                    (clientW > targetW + 8 || clientH > targetH + 8))
+                {
+                    SetWindowPos(hwnd, nullptr, 0, 0, targetW, targetH,
+                        SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+                    Game::logMsg("[VR][MenuWindow] resize %dx%d -> %dx%d", clientW, clientH, targetW, targetH);
+                    m_LastMenuWindowResizeMs = nowMs;
+                    ++m_MenuWindowResizeAttempts;
+                }
+            }
+        }
+    }
+    else
+    {
+        m_MenuWindowResizeAttempts = 0;
+        m_LastMenuWindowResizeMs = 0;
+    }
+
     bool hasLocalPlayerAtUpdateStart = false;
     if (inGameAtUpdateStart && m_Game->m_EngineClient)
     {
@@ -2096,7 +2142,7 @@ void VR::Update()
 }
 
 bool VR::GetWalkAxis(float& x, float& y) {
-    vr::InputAnalogActionData_t d;
+    xr::InputAnalogActionData_t d;
     bool hasAxis = false;
     if (GetAnalogActionData(m_ActionWalk, d)) {
         x = d.x;
@@ -2200,6 +2246,8 @@ void VR::ReleaseVRRenderTargetsForDeviceReset()
 
     SafeReleaseD3D(m_D9LeftEyeSurface);
     SafeReleaseD3D(m_D9RightEyeSurface);
+    SafeReleaseD3D(m_D9LeftEyeSceneSurface);
+    SafeReleaseD3D(m_D9RightEyeSceneSurface);
     if (m_D9LeftEyeDepthSurface || m_D9RightEyeDepthSurface)
         dxvk::D3D9ReShadeVrInvalidateBinding();
     SafeReleaseD3D(m_D9LeftEyeDepthSurface);
@@ -2211,6 +2259,7 @@ void VR::ReleaseVRRenderTargetsForDeviceReset()
     SafeReleaseD3D(m_D9NekoPostOutputTransferPixelShader);
     m_D9NekoPostOutputTransferShaderDevice = nullptr;
     SafeReleaseD3D(m_D9HUDSurface);
+    SafeReleaseD3D(m_D9MenuSurface);
     SafeReleaseD3D(m_D9ScopeLensSurface);
     SafeReleaseD3D(m_D9ScopeLensTexture);
     SafeReleaseD3D(m_D9ScopeLensScratchSurface);
@@ -2228,11 +2277,14 @@ void VR::ReleaseVRRenderTargetsForDeviceReset()
 
     SafeReleaseSourceTexture(m_LeftEyeTexture);
     SafeReleaseSourceTexture(m_RightEyeTexture);
+    SafeReleaseSourceTexture(m_LeftEyeSceneTexture);
+    SafeReleaseSourceTexture(m_RightEyeSceneTexture);
     SafeReleaseSourceTexture(m_LeftEyeSubmitTexture);
     SafeReleaseSourceTexture(m_RightEyeSubmitTexture);
     SafeReleaseSourceTexture(m_NekoPostLinearInputTexture);
     SafeReleaseSourceTexture(m_NekoPostSmallInputTexture);
     SafeReleaseSourceTexture(m_HUDTexture);
+    SafeReleaseSourceTexture(m_MenuTexture);
     SafeReleaseSourceTexture(m_ScopeTexture);
     SafeReleaseSourceTexture(m_RearMirrorTexture);
     SafeReleaseSourceTexture(m_DesktopMirrorTexture);
@@ -2241,6 +2293,7 @@ void VR::ReleaseVRRenderTargetsForDeviceReset()
     std::memset(&m_VKLeftEye, 0, sizeof(m_VKLeftEye));
     std::memset(&m_VKRightEye, 0, sizeof(m_VKRightEye));
     std::memset(&m_VKHUD, 0, sizeof(m_VKHUD));
+    std::memset(&m_VKMenu, 0, sizeof(m_VKMenu));
     std::memset(&m_VKScope, 0, sizeof(m_VKScope));
     std::memset(&m_VKScopeLens, 0, sizeof(m_VKScopeLens));
     std::memset(&m_VKRearMirror, 0, sizeof(m_VKRearMirror));
@@ -2353,6 +2406,37 @@ void VR::CreateVRTextures()
     m_LeftEyeTexture = m_Game->m_MaterialSystem->CreateNamedRenderTargetTextureEx("leftEye0", m_RenderWidth, m_RenderHeight, RT_SIZE_NO_CHANGE, eyeFormat, MATERIAL_RT_DEPTH_SEPARATE, TEXTUREFLAGS_NOMIP);
     m_CreatingTextureID = Texture_RightEye;
     m_RightEyeTexture = m_Game->m_MaterialSystem->CreateNamedRenderTargetTextureEx("rightEye0", m_RenderWidth, m_RenderHeight, RT_SIZE_NO_CHANGE, eyeFormat, MATERIAL_RT_DEPTH_SEPARATE, TEXTUREFLAGS_NOMIP);
+
+    // Black Mesa VR's working path keeps the engine's stereo view at the native
+    // client size and scales the completed frame into the HMD-sized eye targets.
+    // Rendering directly into the 2198x2418 eyes leaves Source's 1920x1080 view
+    // in the top-left corner, with the rest of the eye target uninitialized.
+    uint32_t eyeSceneWidth = static_cast<uint32_t>((std::max)(windowWidth, 0));
+    uint32_t eyeSceneHeight = static_cast<uint32_t>((std::max)(windowHeight, 0));
+    if (eyeSceneWidth < 640 || eyeSceneHeight < 360 ||
+        (eyeSceneWidth == m_RenderWidth && eyeSceneHeight == m_RenderHeight))
+    {
+        // The boot window can briefly be eye-sized before Source applies the
+        // desktop video mode; the game's native view is then the desktop size.
+        eyeSceneWidth = 1920;
+        eyeSceneHeight = 1080;
+    }
+    m_EyeSceneWidth = eyeSceneWidth;
+    m_EyeSceneHeight = eyeSceneHeight;
+
+    m_CreatingTextureID = Texture_LeftEyeScene;
+    m_LeftEyeSceneTexture = m_Game->m_MaterialSystem->CreateNamedRenderTargetTextureEx(
+        "leftEyeScene0", m_EyeSceneWidth, m_EyeSceneHeight, RT_SIZE_NO_CHANGE,
+        eyeFormat, MATERIAL_RT_DEPTH_SEPARATE, TEXTUREFLAGS_NOMIP);
+    m_CreatingTextureID = Texture_RightEyeScene;
+    m_RightEyeSceneTexture = m_Game->m_MaterialSystem->CreateNamedRenderTargetTextureEx(
+        "rightEyeScene0", m_EyeSceneWidth, m_EyeSceneHeight, RT_SIZE_NO_CHANGE,
+        eyeFormat, MATERIAL_RT_DEPTH_SEPARATE, TEXTUREFLAGS_NOMIP);
+    m_CreatingTextureID = Texture_None;
+
+    Game::logMsg("[VR][EyeScene] native=%ux%u eye=%ux%u window=%dx%d bb=%dx%d",
+        m_EyeSceneWidth, m_EyeSceneHeight, m_RenderWidth, m_RenderHeight,
+        windowWidth, windowHeight, backBufferWidth, backBufferHeight);
 
     // Queued rendering needs a stable consumer pair: Source writes leftEye0/rightEye0,
     // then its completion functor snapshots both into these submit RTs. OpenVR never
@@ -2467,6 +2551,15 @@ void VR::CreateVRTextures()
 
     m_CreatingTextureID = Texture_HUD;
     m_HUDTexture = m_Game->m_MaterialSystem->CreateNamedRenderTargetTextureEx("vrHUD", windowWidth, windowHeight, RT_SIZE_NO_CHANGE, backBufferFormat, MATERIAL_RT_DEPTH_SHARED, TEXTUREFLAGS_NOMIP);
+
+    // Dedicated KMT-shared menu texture. The swapchain backbuffer is not
+    // shareable with the x64 helper, so copy the menu into this target before
+    // publishing the menu overlay.
+    m_CreatingTextureID = Texture_Menu;
+    m_MenuTexture = m_Game->m_MaterialSystem->CreateNamedRenderTargetTextureEx(
+        "vrMenu", windowWidth, windowHeight, RT_SIZE_NO_CHANGE,
+        backBufferFormat, MATERIAL_RT_DEPTH_NONE, TEXTUREFLAGS_NOMIP);
+    m_CreatingTextureID = Texture_None;
 
     if (m_RenderPipelineDebugLog)
     {
@@ -2752,7 +2845,7 @@ bool VR::QueueSourceRenderCompletionMarker(
     uint32_t renderFrameSeq,
     bool allowDuplicatePoseSubmit,
     bool releaseSourceFrameOwnership,
-    const vr::HmdMatrix34_t* renderHmdPose)
+    const xr::HmdMatrix34_t* renderHmdPose)
 {
     if (!renderContext)
         return false;
@@ -2876,7 +2969,7 @@ void VR::PublishSourceQueueCompletedFrame(
     uint32_t renderFrameSeq,
     bool allowDuplicatePoseSubmit,
     uint32_t sourceQueueMarkerId,
-    const vr::HmdMatrix34_t* renderHmdPose)
+    const xr::HmdMatrix34_t* renderHmdPose)
 {
     // This mutex is the ownership token for both the submit surfaces and their
     // published frame/pose generation. Present holds it while consuming a pair.
@@ -3088,7 +3181,7 @@ uint32_t VR::PublishRenderCompletedFrame(
     bool allowDuplicatePoseSubmit,
     const char* sourceTag,
     uint32_t sourceQueueMarkerId,
-    const vr::HmdMatrix34_t* renderHmdPose)
+    const xr::HmdMatrix34_t* renderHmdPose)
 {
     if (renderPoseToken == 0)
         renderPoseToken = m_SubmitPoseToken.load(std::memory_order_acquire);
@@ -3144,14 +3237,14 @@ uint32_t VR::PublishRenderCompletedFrame(
     return completedFrameId;
 }
 
-vr::EVROverlayError VR::SetOverlayTextureSynchronized(
-    vr::IVROverlay* overlay,
-    vr::VROverlayHandle_t overlayHandle,
-    const vr::Texture_t* texture,
+xr::EVROverlayError VR::SetOverlayTextureSynchronized(
+    xr::Overlay* overlay,
+    xr::VROverlayHandle_t overlayHandle,
+    const xr::Texture_t* texture,
     bool producerPrepared)
 {
     if (!overlay || !texture)
-        return vr::VROverlayError_RequestFailed;
+        return xr::VROverlayError_RequestFailed;
 
     if (!g_D3DVR9)
         return overlay->SetOverlayTexture(overlayHandle, texture);
@@ -3163,9 +3256,9 @@ vr::EVROverlayError VR::SetOverlayTextureSynchronized(
         ? g_D3DVR9->LockPreparedSubmissionQueue()
         : g_D3DVR9->LockSubmissionQueue();
     if (FAILED(lockHr))
-        return vr::VROverlayError_RequestFailed;
+        return xr::VROverlayError_RequestFailed;
 
-    const vr::EVROverlayError result = overlay->SetOverlayTexture(overlayHandle, texture);
+    const xr::EVROverlayError result = overlay->SetOverlayTexture(overlayHandle, texture);
     g_D3DVR9->UnlockSubmissionQueue();
     return result;
 }
@@ -3249,7 +3342,7 @@ void VR::QueuedCompositorSubmitThreadMain()
         uint64_t eyesUs = 0;
         uint64_t handoffUs = 0;
         bool submittedPair = false;
-        vr::EVRCompositorError lastError = vr::VRCompositorError_None;
+        xr::EVRCompositorError lastError = xr::VRCompositorError_None;
         uint32_t actualCompositorFrameIndex = job.compositorFrameIndex;
 
         {
@@ -3263,7 +3356,7 @@ void VR::QueuedCompositorSubmitThreadMain()
                 const auto slotStart = std::chrono::steady_clock::now();
                 auto readCompositorFrameIndex = [&]()
                     {
-                        vr::Compositor_FrameTiming timing{};
+                        xr::Compositor_FrameTiming timing{};
                         timing.m_nSize = sizeof(timing);
                         if (!m_Compositor->GetFrameTiming(&timing, 0) || timing.m_nFrameIndex == 0)
                             return false;
@@ -3305,7 +3398,7 @@ void VR::QueuedCompositorSubmitThreadMain()
                         // Never release the producer merely because SteamVR paused its
                         // frame index or this wakeup landed in the occupied slot.
                         compositorSlotReady = false;
-                        lastError = vr::VRCompositorError_AlreadySubmitted;
+                        lastError = xr::VRCompositorError_AlreadySubmitted;
                     }
                 }
                 slotUs = static_cast<uint64_t>(
@@ -3328,41 +3421,41 @@ void VR::QueuedCompositorSubmitThreadMain()
 
                 if (queueLocked)
                 {
-                    vr::Compositor_FrameTiming timing{};
+                    xr::Compositor_FrameTiming timing{};
                     timing.m_nSize = sizeof(timing);
                     if (m_Compositor->GetFrameTiming(&timing, 0) && timing.m_nFrameIndex != 0)
                         actualCompositorFrameIndex = timing.m_nFrameIndex;
 
                     if (job.explicitTiming)
                     {
-                        const vr::EVRCompositorError timingError =
+                        const xr::EVRCompositorError timingError =
                             m_Compositor->SubmitExplicitTimingData();
-                        if (timingError != vr::VRCompositorError_None)
+                        if (timingError != xr::VRCompositorError_None)
                         {
                             lastError = timingError;
                             LogCompositorError("AsyncSubmitExplicitTimingData", timingError);
                         }
                     }
 
-                    auto recordSubmit = [&](vr::EVRCompositorError error)
+                    auto recordSubmit = [&](xr::EVRCompositorError error)
                         {
                             if (!m_RenderPipelineDebugLog)
                                 return;
                             m_ActualCompositorSubmitCount.fetch_add(1, std::memory_order_relaxed);
-                            if (error == vr::VRCompositorError_None)
+                            if (error == xr::VRCompositorError_None)
                                 m_SubmitEyeNoneCount.fetch_add(1, std::memory_order_relaxed);
-                            else if (error == vr::VRCompositorError_AlreadySubmitted)
+                            else if (error == xr::VRCompositorError_AlreadySubmitted)
                                 m_SubmitEyeAlreadySubmittedCount.fetch_add(1, std::memory_order_relaxed);
                             else
                                 m_SubmitEyeOtherErrorCount.fetch_add(1, std::memory_order_relaxed);
                         };
 
-                    auto submitEye = [&](vr::EVREye eye, const vr::Texture_t& texture,
-                        const vr::VRTextureBounds_t* bounds)
+                    auto submitEye = [&](xr::EVREye eye, const xr::Texture_t& texture,
+                        const xr::VRTextureBounds_t* bounds)
                         {
-                            vr::VRTextureWithPose_t textureWithPose{};
-                            const vr::Texture_t* submitTexture = &texture;
-                            vr::EVRSubmitFlags submitFlags = vr::Submit_Default;
+                            xr::VRTextureWithPose_t textureWithPose{};
+                            const xr::Texture_t* submitTexture = &texture;
+                            xr::EVRSubmitFlags submitFlags = xr::Submit_Default;
                             if (job.useRenderPose)
                             {
                                 textureWithPose.handle = texture.handle;
@@ -3370,40 +3463,40 @@ void VR::QueuedCompositorSubmitThreadMain()
                                 textureWithPose.eColorSpace = texture.eColorSpace;
                                 textureWithPose.mDeviceToAbsoluteTracking = job.renderHmdPose;
                                 submitTexture = &textureWithPose;
-                                submitFlags = vr::Submit_TextureWithPose;
+                                submitFlags = xr::Submit_TextureWithPose;
                             }
 
-                            vr::EVRCompositorError error =
+                            xr::EVRCompositorError error =
                                 m_Compositor->Submit(eye, submitTexture, bounds, submitFlags);
                             recordSubmit(error);
-                            if (error != vr::VRCompositorError_None &&
+                            if (error != xr::VRCompositorError_None &&
                                 job.useRenderPose &&
-                                error != vr::VRCompositorError_AlreadySubmitted)
+                                error != xr::VRCompositorError_AlreadySubmitted)
                             {
                                 error = m_Compositor->Submit(
-                                    eye, &texture, bounds, vr::Submit_Default);
+                                    eye, &texture, bounds, xr::Submit_Default);
                                 recordSubmit(error);
                             }
                             return error;
                         };
 
                     const auto eyesStart = std::chrono::steady_clock::now();
-                    const vr::VRTextureBounds_t* leftBounds =
+                    const xr::VRTextureBounds_t* leftBounds =
                         job.hasLeftBounds ? &job.leftBounds : nullptr;
-                    const vr::VRTextureBounds_t* rightBounds =
+                    const xr::VRTextureBounds_t* rightBounds =
                         job.hasRightBounds ? &job.rightBounds : nullptr;
-                    const vr::EVRCompositorError leftError =
-                        submitEye(vr::Eye_Left, job.leftTexture, leftBounds);
-                    vr::EVRCompositorError rightError = vr::VRCompositorError_None;
-                    if (leftError == vr::VRCompositorError_None)
-                        rightError = submitEye(vr::Eye_Right, job.rightTexture, rightBounds);
+                    const xr::EVRCompositorError leftError =
+                        submitEye(xr::Eye_Left, job.leftTexture, leftBounds);
+                    xr::EVRCompositorError rightError = xr::VRCompositorError_None;
+                    if (leftError == xr::VRCompositorError_None)
+                        rightError = submitEye(xr::Eye_Right, job.rightTexture, rightBounds);
                     eyesUs = static_cast<uint64_t>(
                         std::chrono::duration_cast<std::chrono::microseconds>(
                             std::chrono::steady_clock::now() - eyesStart).count());
 
-                    lastError = leftError != vr::VRCompositorError_None ? leftError : rightError;
-                    submittedPair = leftError == vr::VRCompositorError_None &&
-                        rightError == vr::VRCompositorError_None;
+                    lastError = leftError != xr::VRCompositorError_None ? leftError : rightError;
+                    submittedPair = leftError == xr::VRCompositorError_None &&
+                        rightError == xr::VRCompositorError_None;
 
                     if (submittedPair && job.explicitTiming)
                     {
@@ -3418,12 +3511,12 @@ void VR::QueuedCompositorSubmitThreadMain()
                 }
                 else
                 {
-                    lastError = vr::VRCompositorError_RequestFailed;
+                    lastError = xr::VRCompositorError_RequestFailed;
                 }
             }
             else if (compositorSlotReady)
             {
-                lastError = vr::VRCompositorError_RequestFailed;
+                lastError = xr::VRCompositorError_RequestFailed;
             }
 
             if (submittedPair)
@@ -3446,7 +3539,7 @@ void VR::QueuedCompositorSubmitThreadMain()
                 // Preserve RenderedNewFrame and all last-submitted generations. A
                 // transient AlreadySubmitted/error therefore retries this stable pair.
                 m_QueuedCompositorSubmitErrorCount.fetch_add(1, std::memory_order_relaxed);
-                if (lastError != vr::VRCompositorError_AlreadySubmitted)
+                if (lastError != xr::VRCompositorError_AlreadySubmitted)
                     LogCompositorError("AsyncSubmit", lastError);
             }
         }
@@ -3484,7 +3577,7 @@ void VR::QueuedCompositorSubmitThreadMain()
             }
         }
 
-        if (!submittedPair && lastError == vr::VRCompositorError_AlreadySubmitted)
+        if (!submittedPair && lastError == xr::VRCompositorError_AlreadySubmitted)
         {
             // Mark only the occupied compositor slot, never the Source frame/pose.
             // The same immutable job is retried after the frame index advances.
@@ -3531,6 +3624,38 @@ void VR::SubmitVRTextures()
         return;
 
     const bool inGame = (m_Game && m_Game->m_EngineClient && m_Game->m_EngineClient->IsInGame());
+
+    auto refreshMenuTexture = [&]() -> bool
+        {
+            if (!g_D3DVR9 || !m_D9MenuSurface || !m_MenuTexture || !m_VKMenu.m_VRTexture.handle)
+                return false;
+
+            IDirect3DDevice9* device = nullptr;
+            if (FAILED(g_D3DVR9->GetD3DDevice(&device)) || !device)
+                return false;
+
+            IDirect3DSurface9* backBuffer = nullptr;
+            HRESULT hr = device->GetBackBuffer(0, 0, D3DBACKBUFFER_TYPE_MONO, &backBuffer);
+            if (SUCCEEDED(hr) && backBuffer)
+            {
+                hr = device->StretchRect(backBuffer, nullptr, m_D9MenuSurface, nullptr, D3DTEXF_LINEAR);
+                backBuffer->Release();
+            }
+            device->Release();
+
+            static std::atomic<int> s_menuCopyLogBudget{ 6 };
+            if (s_menuCopyLogBudget.fetch_sub(1, std::memory_order_relaxed) > 0)
+            {
+                Game::logMsg("[VR][MenuOverlay] copy hr=0x%08lX menuTex=%ux%u shared=0x%llX valid=%u",
+                    static_cast<unsigned long>(hr),
+                    m_VKMenu.m_VulkanData.m_nWidth,
+                    m_VKMenu.m_VulkanData.m_nHeight,
+                    static_cast<unsigned long long>(m_VKMenu.m_VulkanData.m_nSharedHandle),
+                    m_VKMenu.m_VulkanData.m_nSharedHandleValid);
+            }
+            return SUCCEEDED(hr);
+        };
+
     bool hasLocalPlayer = false;
     if (inGame && m_Game)
     {
@@ -3560,23 +3685,24 @@ void VR::SubmitVRTextures()
         if (!RefreshBackBufferTexture(false))
             return;
 
-        if (!vr::VROverlay()->IsOverlayVisible(m_MainMenuHandle))
+        if (!xr::VROverlay()->IsOverlayVisible(m_MainMenuHandle))
             RepositionOverlays();
 
+        refreshMenuTexture();
         SetOverlayTextureSynchronized(
-            vr::VROverlay(),
+            xr::VROverlay(),
             m_MainMenuHandle,
-            &m_VKBackBuffer.m_VRTexture,
+            (m_VKMenu.m_VRTexture.handle ? &m_VKMenu.m_VRTexture : &m_VKBackBuffer.m_VRTexture),
             false);
-        vr::VROverlay()->ShowOverlay(m_MainMenuHandle);
-        vr::VROverlay()->HideOverlay(m_HUDTopHandle);
-        for (vr::VROverlayHandle_t& overlay : m_HUDBottomHandles)
-            vr::VROverlay()->HideOverlay(overlay);
-        vr::VROverlay()->HideOverlay(m_ScopeHandle);
-        vr::VROverlay()->HideOverlay(m_RearMirrorHandle);
+        xr::VROverlay()->ShowOverlay(m_MainMenuHandle);
+        xr::VROverlay()->HideOverlay(m_HUDTopHandle);
+        for (xr::VROverlayHandle_t& overlay : m_HUDBottomHandles)
+            xr::VROverlay()->HideOverlay(overlay);
+        xr::VROverlay()->HideOverlay(m_ScopeHandle);
+        xr::VROverlay()->HideOverlay(m_RearMirrorHandle);
         UpdateDesktopRearMirrorWindow(false);
-        vr::VROverlay()->HideOverlay(m_LeftWristHudHandle);
-        vr::VROverlay()->HideOverlay(m_RightAmmoHudHandle);
+        xr::VROverlay()->HideOverlay(m_LeftWristHudHandle);
+        xr::VROverlay()->HideOverlay(m_RightAmmoHudHandle);
         m_CompositorNeedsHandoff = false;
         return;
     }
@@ -3584,8 +3710,8 @@ void VR::SubmitVRTextures()
     if (renderedNewFrame || inGame)
         m_MenuBlankSubmitted = false;
 
-    const vr::VRTextureBounds_t* leftEyeSubmitBounds = &(m_TextureBounds)[0];
-    const vr::VRTextureBounds_t* rightEyeSubmitBounds = &(m_TextureBounds)[1];
+    const xr::VRTextureBounds_t* leftEyeSubmitBounds = &(m_TextureBounds)[0];
+    const xr::VRTextureBounds_t* rightEyeSubmitBounds = &(m_TextureBounds)[1];
 
     if (m_QueuedSourceMarkerDebugLog && queued && sceneReadyForStaleResubmit)
     {
@@ -3721,7 +3847,7 @@ void VR::SubmitVRTextures()
         const auto slotGateStart = std::chrono::steady_clock::now();
         auto readCompositorFrameIndex = [&]()
             {
-                vr::Compositor_FrameTiming timing{};
+                xr::Compositor_FrameTiming timing{};
                 timing.m_nSize = sizeof(timing);
                 if (!m_Compositor->GetFrameTiming(&timing, 0) || timing.m_nFrameIndex == 0)
                     return false;
@@ -4030,14 +4156,14 @@ void VR::SubmitVRTextures()
             const auto timingDataStart = profilePresentSpikeSubmit
                 ? std::chrono::steady_clock::now()
                 : std::chrono::steady_clock::time_point{};
-            vr::EVRCompositorError timingError = m_Compositor->SubmitExplicitTimingData();
+            xr::EVRCompositorError timingError = m_Compositor->SubmitExplicitTimingData();
             if (profilePresentSpikeSubmit)
             {
                 m_PresentSpikeSubmitTimingDataUs += static_cast<uint64_t>(
                     std::chrono::duration_cast<std::chrono::microseconds>(
                         std::chrono::steady_clock::now() - timingDataStart).count());
             }
-            if (timingError != vr::VRCompositorError_None)
+            if (timingError != xr::VRCompositorError_None)
             {
                 LogCompositorError("SubmitExplicitTimingData", timingError);
             }
@@ -4045,7 +4171,7 @@ void VR::SubmitVRTextures()
             timingDataSubmitted = true;
         };
 
-    vr::HmdMatrix34_t completedRenderHmdPose{};
+    xr::HmdMatrix34_t completedRenderHmdPose{};
     bool useRenderPoseTextureSubmit = false;
     if (queued &&
         sceneReadyForStaleResubmit &&
@@ -4060,7 +4186,7 @@ void VR::SubmitVRTextures()
         }
     }
 
-    auto recordCompositorSubmit = [&](vr::EVRCompositorError submitError)
+    auto recordCompositorSubmit = [&](xr::EVRCompositorError submitError)
         {
             if (!renderPipelineDiagnostics)
                 return;
@@ -4068,11 +4194,11 @@ void VR::SubmitVRTextures()
             m_ActualCompositorSubmitCount.fetch_add(
                 1,
                 std::memory_order_relaxed);
-            if (submitError == vr::VRCompositorError_None)
+            if (submitError == xr::VRCompositorError_None)
             {
                 m_SubmitEyeNoneCount.fetch_add(1, std::memory_order_relaxed);
             }
-            else if (submitError == vr::VRCompositorError_AlreadySubmitted)
+            else if (submitError == xr::VRCompositorError_AlreadySubmitted)
             {
                 m_SubmitEyeAlreadySubmittedCount.fetch_add(
                     1,
@@ -4086,17 +4212,17 @@ void VR::SubmitVRTextures()
             }
         };
 
-    auto submitEye = [&](vr::EVREye eye, vr::Texture_t* texture, const vr::VRTextureBounds_t* bounds)
+    auto submitEye = [&](xr::EVREye eye, xr::Texture_t* texture, const xr::VRTextureBounds_t* bounds)
         {
             if (!texture || !texture->handle)
                 return false;
 
             ensureTimingData();
 
-            vr::Texture_t textureCopy{};
-            vr::VRTextureWithPose_t textureWithPose{};
-            const vr::Texture_t* submitTexture = &textureCopy;
-            vr::EVRSubmitFlags submitFlags = vr::Submit_Default;
+            xr::Texture_t textureCopy{};
+            xr::VRTextureWithPose_t textureWithPose{};
+            const xr::Texture_t* submitTexture = &textureCopy;
+            xr::EVRSubmitFlags submitFlags = xr::Submit_Default;
             {
                 std::lock_guard<TextureStateMutex> textureLock(m_TextureMutex);
                 if (!texture->handle)
@@ -4110,21 +4236,21 @@ void VR::SubmitVRTextures()
                     textureWithPose.eColorSpace = textureCopy.eColorSpace;
                     textureWithPose.mDeviceToAbsoluteTracking = completedRenderHmdPose;
                     submitTexture = &textureWithPose;
-                    submitFlags = vr::Submit_TextureWithPose;
+                    submitFlags = xr::Submit_TextureWithPose;
                 }
             }
 
-            auto invokeCompositorSubmit = [&](const vr::Texture_t* submittedTexture,
-                vr::EVRSubmitFlags submittedFlags)
+            auto invokeCompositorSubmit = [&](const xr::Texture_t* submittedTexture,
+                xr::EVRSubmitFlags submittedFlags)
                 {
                     const auto eyeSubmitStart = profilePresentSpikeSubmit
                         ? std::chrono::steady_clock::now()
                         : std::chrono::steady_clock::time_point{};
-                    const vr::EVRCompositorError error =
+                    const xr::EVRCompositorError error =
                         m_Compositor->Submit(eye, submittedTexture, bounds, submittedFlags);
                     if (profilePresentSpikeSubmit)
                     {
-                        uint64_t& eyeSubmitUs = eye == vr::Eye_Left
+                        uint64_t& eyeSubmitUs = eye == xr::Eye_Left
                             ? m_PresentSpikeSubmitLeftEyeUs
                             : m_PresentSpikeSubmitRightEyeUs;
                         eyeSubmitUs += static_cast<uint64_t>(
@@ -4134,12 +4260,12 @@ void VR::SubmitVRTextures()
                     return error;
                 };
 
-            vr::EVRCompositorError submitError =
+            xr::EVRCompositorError submitError =
                 invokeCompositorSubmit(submitTexture, submitFlags);
             recordCompositorSubmit(submitError);
-            if (submitError != vr::VRCompositorError_None &&
+            if (submitError != xr::VRCompositorError_None &&
                 useRenderPoseTextureSubmit &&
-                submitError != vr::VRCompositorError_AlreadySubmitted)
+                submitError != xr::VRCompositorError_AlreadySubmitted)
             {
                 if (m_RenderPipelineDebugLog)
                 {
@@ -4155,12 +4281,12 @@ void VR::SubmitVRTextures()
                             m_LastSubmittedFrameId.load(std::memory_order_acquire));
                     }
                 }
-                submitError = invokeCompositorSubmit(&textureCopy, vr::Submit_Default);
+                submitError = invokeCompositorSubmit(&textureCopy, xr::Submit_Default);
                 recordCompositorSubmit(submitError);
             }
-            if (submitError != vr::VRCompositorError_None)
+            if (submitError != xr::VRCompositorError_None)
             {
-                if (queued && submitError == vr::VRCompositorError_AlreadySubmitted)
+                if (queued && submitError == xr::VRCompositorError_AlreadySubmitted)
                 {
                     // This compositor slot is already occupied, but this fresh Source
                     // frame was not displayed. Keep its frame/pose generation pending
@@ -4177,14 +4303,14 @@ void VR::SubmitVRTextures()
         };
 
     PendingOverlayTextureBindBatch pendingOverlayTextureBinds{};
-    auto stageOverlayTextureBind = [&](vr::VROverlayHandle_t overlay, const vr::Texture_t* texture,
+    auto stageOverlayTextureBind = [&](xr::VROverlayHandle_t overlay, const xr::Texture_t* texture,
         IDirect3DSurface9* surface, bool hideOnFailure = false)
         {
             return pendingOverlayTextureBinds.Stage(overlay, texture, surface, hideOnFailure);
         };
 
-    auto submitStereoPair = [&](vr::Texture_t* leftTexture, const vr::VRTextureBounds_t* leftBounds,
-        vr::Texture_t* rightTexture, const vr::VRTextureBounds_t* rightBounds) -> bool
+    auto submitStereoPair = [&](xr::Texture_t* leftTexture, const xr::VRTextureBounds_t* leftBounds,
+        xr::Texture_t* rightTexture, const xr::VRTextureBounds_t* rightBounds) -> bool
         {
             // Keep the submit descriptors, pixels and frame/pose generation together.
             // The Source completion functor takes the same mutex before replacing the pair.
@@ -4308,15 +4434,15 @@ void VR::SubmitVRTextures()
             const auto overlayBindStart = profilePresentSpikeSubmit
                 ? std::chrono::steady_clock::now()
                 : std::chrono::steady_clock::time_point{};
-            if (vr::IVROverlay* overlayApi = vr::VROverlay())
+            if (xr::Overlay* overlayApi = xr::VROverlay())
             {
                 for (size_t i = 0; i < pendingOverlayTextureBinds.count; ++i)
                 {
                     const PendingOverlayTextureBind& bind = pendingOverlayTextureBinds.binds[i];
-                    const vr::EVROverlayError bindError = bind.texture
+                    const xr::EVROverlayError bindError = bind.texture
                         ? overlayApi->SetOverlayTexture(bind.overlay, bind.texture)
-                        : vr::VROverlayError_RequestFailed;
-                    if (bindError != vr::VROverlayError_None && bind.hideOnFailure)
+                        : xr::VROverlayError_RequestFailed;
+                    if (bindError != xr::VROverlayError_None && bind.hideOnFailure)
                         overlayApi->HideOverlay(bind.overlay);
                 }
             }
@@ -4369,10 +4495,10 @@ void VR::SubmitVRTextures()
                     return true;
                 }
 
-                if (!submitEye(vr::Eye_Left, leftTexture, leftBounds))
+                if (!submitEye(xr::Eye_Left, leftTexture, leftBounds))
                     return false;
 
-                if (!submitEye(vr::Eye_Right, rightTexture, rightBounds))
+                if (!submitEye(xr::Eye_Right, rightTexture, rightBounds))
                     return false;
 
                 successfulSubmit = true;
@@ -4394,8 +4520,8 @@ void VR::SubmitVRTextures()
                 return true;
             }
 
-            const bool leftOk = submitEye(vr::Eye_Left, leftTexture, leftBounds);
-            const bool rightOk = submitEye(vr::Eye_Right, rightTexture, rightBounds);
+            const bool leftOk = submitEye(xr::Eye_Left, leftTexture, leftBounds);
+            const bool rightOk = submitEye(xr::Eye_Right, rightTexture, rightBounds);
             successfulSubmit = leftOk || rightOk;
             if (successfulSubmit && m_CompositorExplicitTiming)
             {
@@ -4416,22 +4542,22 @@ void VR::SubmitVRTextures()
 
     auto hideHudOverlays = [&]()
         {
-            vr::VROverlay()->HideOverlay(m_HUDTopHandle);
-            for (vr::VROverlayHandle_t& overlay : m_HUDBottomHandles)
-                vr::VROverlay()->HideOverlay(overlay);
+            xr::VROverlay()->HideOverlay(m_HUDTopHandle);
+            for (xr::VROverlayHandle_t& overlay : m_HUDBottomHandles)
+                xr::VROverlay()->HideOverlay(overlay);
         };
 
-    const vr::VRTextureBounds_t topBounds{ 0.0f, 0.0f, 1.0f, 1.0f };
-    auto applyHudTexture = [&](vr::VROverlayHandle_t overlay, const vr::VRTextureBounds_t& bounds)
+    const xr::VRTextureBounds_t topBounds{ 0.0f, 0.0f, 1.0f, 1.0f };
+    auto applyHudTexture = [&](xr::VROverlayHandle_t overlay, const xr::VRTextureBounds_t& bounds)
         {
-            vr::VROverlay()->SetOverlayTextureBounds(overlay, &bounds);
+            xr::VROverlay()->SetOverlayTextureBounds(overlay, &bounds);
             stageOverlayTextureBind(overlay, &m_VKHUD.m_VRTexture, m_D9HUDSurface);
         };
 
-    auto applyScopeTexture = [&](vr::VROverlayHandle_t overlay) -> bool
+    auto applyScopeTexture = [&](xr::VROverlayHandle_t overlay) -> bool
         {
-            static const vr::VRTextureBounds_t full{ 0.0f, 0.0f, 1.0f, 1.0f };
-            vr::VROverlay()->SetOverlayTextureBounds(overlay, &full);
+            static const xr::VRTextureBounds_t full{ 0.0f, 0.0f, 1.0f, 1.0f };
+            xr::VROverlay()->SetOverlayTextureBounds(overlay, &full);
             if (m_ScopeLensOverlayReady.load(std::memory_order_acquire) == 0 ||
                 !m_VKScopeLens.m_VRTexture.handle)
             {
@@ -4440,12 +4566,12 @@ void VR::SubmitVRTextures()
 
             return stageOverlayTextureBind(overlay, &m_VKScopeLens.m_VRTexture, m_D9ScopeLensSurface, true);
         };
-    auto applyRearMirrorTexture = [&](vr::VROverlayHandle_t overlay)
+    auto applyRearMirrorTexture = [&](xr::VROverlayHandle_t overlay)
         {
-            vr::VRTextureBounds_t bounds{ 0.0f, 0.0f, 1.0f, 1.0f };
+            xr::VRTextureBounds_t bounds{ 0.0f, 0.0f, 1.0f, 1.0f };
             if (m_RearMirrorFlipHorizontal)
                 std::swap(bounds.uMin, bounds.uMax);
-            vr::VROverlay()->SetOverlayTextureBounds(overlay, &bounds);
+            xr::VROverlay()->SetOverlayTextureBounds(overlay, &bounds);
             stageOverlayTextureBind(overlay, &m_VKRearMirror.m_VRTexture, m_D9RearMirrorSurface);
         };
 
@@ -4458,8 +4584,8 @@ void VR::SubmitVRTextures()
         if (sceneReadyForStaleResubmit)
         {
             // Ensure the menu overlay is not left visible while in-game.
-            if (vr::VROverlay()->IsOverlayVisible(m_MainMenuHandle))
-                vr::VROverlay()->HideOverlay(m_MainMenuHandle);
+            if (xr::VROverlay()->IsOverlayVisible(m_MainMenuHandle))
+                xr::VROverlay()->HideOverlay(m_MainMenuHandle);
 
             // During map load we can be in-game before fresh VR render targets are recreated.
             // Do not submit stale menu/blank Vulkan handles here; wait for the first rendered frame.
@@ -4478,21 +4604,22 @@ void VR::SubmitVRTextures()
         if (!RefreshBackBufferTexture(false))
             return;
 
-        if (!vr::VROverlay()->IsOverlayVisible(m_MainMenuHandle))
+        if (!xr::VROverlay()->IsOverlayVisible(m_MainMenuHandle))
             RepositionOverlays();
 
+        refreshMenuTexture();
         SetOverlayTextureSynchronized(
-            vr::VROverlay(),
+            xr::VROverlay(),
             m_MainMenuHandle,
-            &m_VKBackBuffer.m_VRTexture,
+            (m_VKMenu.m_VRTexture.handle ? &m_VKMenu.m_VRTexture : &m_VKBackBuffer.m_VRTexture),
             false);
-        vr::VROverlay()->ShowOverlay(m_MainMenuHandle);
+        xr::VROverlay()->ShowOverlay(m_MainMenuHandle);
         hideHudOverlays();
-        vr::VROverlay()->HideOverlay(m_ScopeHandle);
-        vr::VROverlay()->HideOverlay(m_RearMirrorHandle);
+        xr::VROverlay()->HideOverlay(m_ScopeHandle);
+        xr::VROverlay()->HideOverlay(m_RearMirrorHandle);
         UpdateDesktopRearMirrorWindow(false);
-        vr::VROverlay()->HideOverlay(m_LeftWristHudHandle);
-        vr::VROverlay()->HideOverlay(m_RightAmmoHudHandle);
+        xr::VROverlay()->HideOverlay(m_LeftWristHudHandle);
+        xr::VROverlay()->HideOverlay(m_RightAmmoHudHandle);
 
         if (!sceneReadyForStaleResubmit)
         {
@@ -4523,7 +4650,7 @@ void VR::SubmitVRTextures()
     }
 
 
-    vr::VROverlay()->HideOverlay(m_MainMenuHandle);
+    xr::VROverlay()->HideOverlay(m_MainMenuHandle);
     const bool focusedVguiHud =
         (m_Game && m_Game->m_EngineClient && m_Game->m_EngineClient->IsPaused()) ||
         (m_Game && m_Game->m_VguiSurface && m_Game->m_VguiSurface->IsCursorVisible());
@@ -4531,27 +4658,27 @@ void VR::SubmitVRTextures()
     if (wantsTopHudOverlay)
     {
         applyHudTexture(m_HUDTopHandle, topBounds);
-        vr::VROverlay()->ShowOverlay(m_HUDTopHandle);
+        xr::VROverlay()->ShowOverlay(m_HUDTopHandle);
     }
     else
     {
-        vr::VROverlay()->HideOverlay(m_HUDTopHandle);
+        xr::VROverlay()->HideOverlay(m_HUDTopHandle);
     }
-    for (vr::VROverlayHandle_t& overlay : m_HUDBottomHandles)
-        vr::VROverlay()->HideOverlay(overlay);
+    for (xr::VROverlayHandle_t& overlay : m_HUDBottomHandles)
+        xr::VROverlay()->HideOverlay(overlay);
 
     // Scope overlay independent of HUD cursor mode
     if (m_ScopeTexture && m_ScopeEnabled)
     {
         const bool scopeOverlayTextureReady = applyScopeTexture(m_ScopeHandle);
         const float alpha = IsScopeActive() ? 1.0f : std::clamp(m_ScopeOverlayIdleAlpha, 0.0f, 1.0f);
-        vr::VROverlay()->SetOverlayAlpha(m_ScopeHandle, alpha);
+        xr::VROverlay()->SetOverlayAlpha(m_ScopeHandle, alpha);
 
-        vr::TrackedDeviceIndex_t leftControllerIndex = m_System->GetTrackedDeviceIndexForControllerRole(vr::TrackedControllerRole_LeftHand);
-        vr::TrackedDeviceIndex_t rightControllerIndex = m_System->GetTrackedDeviceIndexForControllerRole(vr::TrackedControllerRole_RightHand);
+        xr::TrackedDeviceIndex_t leftControllerIndex = m_System->GetTrackedDeviceIndexForControllerRole(xr::TrackedControllerRole_LeftHand);
+        xr::TrackedDeviceIndex_t rightControllerIndex = m_System->GetTrackedDeviceIndexForControllerRole(xr::TrackedControllerRole_RightHand);
         if (m_LeftHanded)
             std::swap(leftControllerIndex, rightControllerIndex);
-        const vr::TrackedDeviceIndex_t gunControllerIndex = rightControllerIndex;
+        const xr::TrackedDeviceIndex_t gunControllerIndex = rightControllerIndex;
 
         // Absolute scope overlay modes:
         // - mouse mode: no tracked gun controller required
@@ -4562,15 +4689,15 @@ void VR::SubmitVRTextures()
 
         const bool canShowScope = scopeOverlayTextureReady
             && ShouldRenderScope()
-            && (m_MouseModeEnabled || useThirdPersonBodyAnchor || gunControllerIndex != vr::k_unTrackedDeviceIndexInvalid);
+            && (m_MouseModeEnabled || useThirdPersonBodyAnchor || gunControllerIndex != xr::k_unTrackedDeviceIndexInvalid);
         if (canShowScope)
-            vr::VROverlay()->ShowOverlay(m_ScopeHandle);
+            xr::VROverlay()->ShowOverlay(m_ScopeHandle);
         else
-            vr::VROverlay()->HideOverlay(m_ScopeHandle);
+            xr::VROverlay()->HideOverlay(m_ScopeHandle);
     }
     else
     {
-        vr::VROverlay()->HideOverlay(m_ScopeHandle);
+        xr::VROverlay()->HideOverlay(m_ScopeHandle);
     }
 
     if (m_RearMirrorTexture && (m_RearMirrorEnabled || m_DesktopRearMirrorWindowEnabled))
@@ -4578,7 +4705,7 @@ void VR::SubmitVRTextures()
         if (m_RearMirrorEnabled)
         {
             applyRearMirrorTexture(m_RearMirrorHandle);
-            vr::VROverlay()->SetOverlayAlpha(m_RearMirrorHandle, std::clamp(m_RearMirrorAlpha, 0.0f, 1.0f));
+            xr::VROverlay()->SetOverlayAlpha(m_RearMirrorHandle, std::clamp(m_RearMirrorAlpha, 0.0f, 1.0f));
 
             // Body-anchored rear mirror: update absolute transform every frame.
             UpdateRearMirrorOverlayTransform();
@@ -4746,14 +4873,14 @@ void VR::SubmitVRTextures()
         const bool rearMirrorContentVisible = ShouldRenderRearMirror();
         const bool showVrRearMirror = m_RearMirrorEnabled && rearMirrorContentVisible && !shouldHideRearMirrorDueToAimLine();
         if (showVrRearMirror)
-            vr::VROverlay()->ShowOverlay(m_RearMirrorHandle);
+            xr::VROverlay()->ShowOverlay(m_RearMirrorHandle);
         else
-            vr::VROverlay()->HideOverlay(m_RearMirrorHandle);
+            xr::VROverlay()->HideOverlay(m_RearMirrorHandle);
         UpdateDesktopRearMirrorWindow(m_DesktopRearMirrorWindowEnabled && rearMirrorContentVisible);
     }
     else
     {
-        vr::VROverlay()->HideOverlay(m_RearMirrorHandle);
+        xr::VROverlay()->HideOverlay(m_RearMirrorHandle);
         UpdateDesktopRearMirrorWindow(false);
     }
 
@@ -4782,9 +4909,9 @@ void VR::SubmitVRTextures()
     }
 }
 
-void VR::LogCompositorError(const char* action, vr::EVRCompositorError error)
+void VR::LogCompositorError(const char* action, xr::EVRCompositorError error)
 {
-    if (error == vr::VRCompositorError_None || !action)
+    if (error == xr::VRCompositorError_None || !action)
         return;
 
     constexpr auto kLogCooldown = std::chrono::seconds(5);
@@ -4798,11 +4925,11 @@ void VR::LogCompositorError(const char* action, vr::EVRCompositorError error)
 }
 
 
-void VR::GetPoseData(vr::TrackedDevicePose_t& poseRaw, TrackedDevicePoseData& poseOut)
+void VR::GetPoseData(xr::TrackedDevicePose_t& poseRaw, TrackedDevicePoseData& poseOut)
 {
     if (poseRaw.bPoseIsValid)
     {
-        vr::HmdMatrix34_t mat = poseRaw.mDeviceToAbsoluteTracking;
+        xr::HmdMatrix34_t mat = poseRaw.mDeviceToAbsoluteTracking;
         Vector pos;
         Vector vel;
         QAngle ang;
@@ -4829,16 +4956,16 @@ void VR::GetPoseData(vr::TrackedDevicePose_t& poseRaw, TrackedDevicePoseData& po
 
 void VR::UpdateRearMirrorOverlayTransform()
 {
-    if (!m_RearMirrorEnabled || m_RearMirrorHandle == vr::k_ulOverlayHandleInvalid)
+    if (!m_RearMirrorEnabled || m_RearMirrorHandle == xr::k_ulOverlayHandleInvalid)
         return;
 
     // We place the rear mirror in tracking space (meters), anchored to the same "body origin"
     // used by the inventory system: InventoryBodyOriginOffset is (forward,right,up) in body space.
-    const vr::TrackedDevicePose_t hmdPose = m_Poses[vr::k_unTrackedDeviceIndex_Hmd];
+    const xr::TrackedDevicePose_t hmdPose = m_Poses[xr::k_unTrackedDeviceIndex_Hmd];
     if (!hmdPose.bPoseIsValid)
         return;
 
-    const vr::HmdMatrix34_t hmdMat = hmdPose.mDeviceToAbsoluteTracking;
+    const xr::HmdMatrix34_t hmdMat = hmdPose.mDeviceToAbsoluteTracking;
     const Vector hmdPos = { hmdMat.m[0][3], hmdMat.m[1][3], hmdMat.m[2][3] };
 
     const Vector up = { 0.0f, 1.0f, 0.0f }; // OpenVR tracking space: +Y is up
@@ -4918,18 +5045,18 @@ void VR::UpdateRearMirrorOverlayTransform()
     float Rworld[3][3];
     mul33(B, Roff, Rworld);
 
-    vr::HmdMatrix34_t mirrorAbs = {
+    xr::HmdMatrix34_t mirrorAbs = {
         Rworld[0][0], Rworld[0][1], Rworld[0][2], mirrorPos.x,
         Rworld[1][0], Rworld[1][1], Rworld[1][2], mirrorPos.y,
         Rworld[2][0], Rworld[2][1], Rworld[2][2], mirrorPos.z
     };
 
-    const vr::ETrackingUniverseOrigin trackingOrigin = vr::VRCompositor()->GetTrackingSpace();
-    vr::VROverlay()->SetOverlayTransformAbsolute(m_RearMirrorHandle, trackingOrigin, &mirrorAbs);
+    const xr::ETrackingUniverseOrigin trackingOrigin = xr::VRCompositor()->GetTrackingSpace();
+    xr::VROverlay()->SetOverlayTransformAbsolute(m_RearMirrorHandle, trackingOrigin, &mirrorAbs);
     float mirrorWidth = (std::max)(0.01f, m_RearMirrorOverlayWidthMeters);
     if (m_RearMirrorSpecialWarningDistance > 0.0f && m_RearMirrorSpecialEnlargeActive)
         mirrorWidth *= 2.0f;
-    vr::VROverlay()->SetOverlayWidthInMeters(m_RearMirrorHandle, mirrorWidth);
+    xr::VROverlay()->SetOverlayWidthInMeters(m_RearMirrorHandle, mirrorWidth);
 }
 
 void VR::UpdateScopeOverlayTransform()
@@ -4943,7 +5070,7 @@ void VR::UpdateScopeOverlayTransform()
     // - third-person mode (scope overlay should not be controller-mounted).
     const bool useThirdPersonBodyAnchor = m_IsThirdPersonCamera && !m_MouseModeEnabled;
     const bool useThirdPersonEyeAnchor = useThirdPersonBodyAnchor && m_ThirdPersonFrontViewEnabled;
-    if ((!m_MouseModeEnabled && !useThirdPersonBodyAnchor) || m_ScopeHandle == vr::k_ulOverlayHandleInvalid)
+    if ((!m_MouseModeEnabled && !useThirdPersonBodyAnchor) || m_ScopeHandle == xr::k_ulOverlayHandleInvalid)
         return;
 
     const float scopeWidth = (std::max)(
@@ -4958,11 +5085,11 @@ void VR::UpdateScopeOverlayTransform()
     // If we feed Source units into SetOverlayTransformAbsolute, the overlay ends up kilometers away.
     // So for mouse mode we build the transform directly from the OpenVR HMD tracking pose.
 
-    const vr::TrackedDevicePose_t hmdPose = m_Poses[vr::k_unTrackedDeviceIndex_Hmd];
+    const xr::TrackedDevicePose_t hmdPose = m_Poses[xr::k_unTrackedDeviceIndex_Hmd];
     if (!hmdPose.bPoseIsValid)
         return;
 
-    const vr::HmdMatrix34_t hmdMat = hmdPose.mDeviceToAbsoluteTracking;
+    const xr::HmdMatrix34_t hmdMat = hmdPose.mDeviceToAbsoluteTracking;
     const Vector hmdPos = { hmdMat.m[0][3], hmdMat.m[1][3], hmdMat.m[2][3] }; // meters
 
     // Tracking-space basis (meters): columns of the 3x4 matrix
@@ -5067,14 +5194,14 @@ void VR::UpdateScopeOverlayTransform()
     const float R21 = B20 * Roff01 + B21 * Roff11 + B22 * Roff21;
     const float R22 = B20 * Roff02 + B21 * Roff12 + B22 * Roff22;
 
-    vr::HmdMatrix34_t scopeAbs = {
+    xr::HmdMatrix34_t scopeAbs = {
         R00, R01, R02, overlayPos.x,
         R10, R11, R12, overlayPos.y,
         R20, R21, R22, overlayPos.z
     };
-    const vr::ETrackingUniverseOrigin trackingOrigin = vr::VRCompositor()->GetTrackingSpace();
-    vr::VROverlay()->SetOverlayTransformAbsolute(m_ScopeHandle, trackingOrigin, &scopeAbs);
-    vr::VROverlay()->SetOverlayWidthInMeters(m_ScopeHandle, scopeWidth);
+    const xr::ETrackingUniverseOrigin trackingOrigin = xr::VRCompositor()->GetTrackingSpace();
+    xr::VROverlay()->SetOverlayTransformAbsolute(m_ScopeHandle, trackingOrigin, &scopeAbs);
+    xr::VROverlay()->SetOverlayWidthInMeters(m_ScopeHandle, scopeWidth);
 }
 
 bool VR::ShouldRenderRearMirror() const
@@ -5133,8 +5260,8 @@ bool VR::ShouldUpdateRearMirrorRTT()
 }
 void VR::RepositionOverlays()
 {
-    vr::TrackedDevicePose_t hmdPose = m_Poses[vr::k_unTrackedDeviceIndex_Hmd];
-    vr::HmdMatrix34_t hmdMat = hmdPose.mDeviceToAbsoluteTracking;
+    xr::TrackedDevicePose_t hmdPose = m_Poses[xr::k_unTrackedDeviceIndex_Hmd];
+    xr::HmdMatrix34_t hmdMat = hmdPose.mDeviceToAbsoluteTracking;
     Vector hmdPosition = { hmdMat.m[0][3], hmdMat.m[1][3], hmdMat.m[2][3] };
     Vector hmdForwardYaw = { -hmdMat.m[0][2], 0.0f, -hmdMat.m[2][2] };
     Vector hmdForwardFull = { -hmdMat.m[0][2], -hmdMat.m[1][2], -hmdMat.m[2][2] };
@@ -5152,14 +5279,14 @@ void VR::RepositionOverlays()
     if (windowHeight <= 0)
         windowHeight = static_cast<int>((std::max)(1u, m_RenderHeight));
 
-    vr::HmdMatrix34_t menuTransform =
+    xr::HmdMatrix34_t menuTransform =
     {
         1.0f, 0.0f, 0.0f, 0.0f,
         0.0f, 1.0f, 0.0f, 1.0f,
         0.0f, 0.0f, 1.0f, 1.0f
     };
 
-    vr::ETrackingUniverseOrigin trackingOrigin = vr::VRCompositor()->GetTrackingSpace();
+    xr::ETrackingUniverseOrigin trackingOrigin = xr::VRCompositor()->GetTrackingSpace();
 
     // Reposition main menu overlay
     if (!RefreshBackBufferTexture(false))
@@ -5193,12 +5320,12 @@ void VR::RepositionOverlays()
     menuTransform.m[2][0] = -sin(hmdRotationDegrees) * xScale;
     menuTransform.m[2][2] *= cos(hmdRotationDegrees);
 
-    vr::VROverlay()->SetOverlayTransformAbsolute(m_MainMenuHandle, trackingOrigin, &menuTransform);
-    vr::VROverlay()->SetOverlayWidthInMeters(m_MainMenuHandle, 1.5 * (1.0 / heightRatio));
+    xr::VROverlay()->SetOverlayTransformAbsolute(m_MainMenuHandle, trackingOrigin, &menuTransform);
+    xr::VROverlay()->SetOverlayWidthInMeters(m_MainMenuHandle, 1.5 * (1.0 / heightRatio));
 
     auto buildFacingTransform = [&](const Vector& position)
         {
-            vr::HmdMatrix34_t transform =
+            xr::HmdMatrix34_t transform =
             {
                 1.0f, 0.0f, 0.0f, position.x,
                 0.0f, 1.0f, 0.0f, position.y,
@@ -5217,7 +5344,7 @@ void VR::RepositionOverlays()
 
     auto buildHmdFollowTransform = [&](const Vector& position)
         {
-            vr::HmdMatrix34_t transform =
+            xr::HmdMatrix34_t transform =
             {
                 hmdMat.m[0][0], hmdMat.m[0][1], hmdMat.m[0][2], position.x,
                 hmdMat.m[1][0], hmdMat.m[1][1], hmdMat.m[1][2], position.y,
@@ -5244,14 +5371,14 @@ void VR::RepositionOverlays()
     hudNewPos += hudRight * m_FixedHudXOffset;
     hudNewPos += hudUp * (-0.25f + m_FixedHudYOffset);
 
-    vr::HmdMatrix34_t hudTopTransform = hudFollowHmdMovement ? buildHmdFollowTransform(hudNewPos) : buildFacingTransform(hudNewPos);
+    xr::HmdMatrix34_t hudTopTransform = hudFollowHmdMovement ? buildHmdFollowTransform(hudNewPos) : buildFacingTransform(hudNewPos);
 
-    vr::VROverlay()->SetOverlayTransformAbsolute(m_HUDTopHandle, trackingOrigin, &hudTopTransform);
-    vr::VROverlay()->SetOverlayWidthInMeters(m_HUDTopHandle, m_HudSize);
-    vr::VROverlay()->SetOverlayCurvature(m_HUDTopHandle, (std::max)(0.0f, m_TopHudCurvature));
+    xr::VROverlay()->SetOverlayTransformAbsolute(m_HUDTopHandle, trackingOrigin, &hudTopTransform);
+    xr::VROverlay()->SetOverlayWidthInMeters(m_HUDTopHandle, m_HudSize);
+    xr::VROverlay()->SetOverlayCurvature(m_HUDTopHandle, (std::max)(0.0f, m_TopHudCurvature));
 
     // Place the intent-sense panel in the upper-right area of the same in-game HUD plane.
-    if (m_SpecialInfectedIntentSenseHudHandle != vr::k_ulOverlayHandleInvalid)
+    if (m_SpecialInfectedIntentSenseHudHandle != xr::k_ulOverlayHandleInvalid)
     {
         const float hudAspect = (windowWidth > 0)
             ? ((std::max)(1.0f, static_cast<float>(windowHeight)) / (std::max)(1.0f, static_cast<float>(windowWidth)))
@@ -5263,16 +5390,16 @@ void VR::RepositionOverlays()
         const float xOff = (m_HudSize * 0.5f) - (panelWidth * 0.5f) - m_SpecialInfectedIntentSenseHudMarginXMeters;
         const float yOff = (hudHeightMeters * 0.5f) - (panelHeight * 0.5f) - m_SpecialInfectedIntentSenseHudMarginYMeters;
         Vector panelPos = hudNewPos + hudRight * xOff + hudUp * yOff;
-        vr::HmdMatrix34_t intentHudTransform = hudFollowHmdMovement ? buildHmdFollowTransform(panelPos) : buildFacingTransform(panelPos);
-        vr::VROverlay()->SetOverlayTransformAbsolute(m_SpecialInfectedIntentSenseHudHandle, trackingOrigin, &intentHudTransform);
-        vr::VROverlay()->SetOverlayWidthInMeters(m_SpecialInfectedIntentSenseHudHandle, panelWidth);
+        xr::HmdMatrix34_t intentHudTransform = hudFollowHmdMovement ? buildHmdFollowTransform(panelPos) : buildFacingTransform(panelPos);
+        xr::VROverlay()->SetOverlayTransformAbsolute(m_SpecialInfectedIntentSenseHudHandle, trackingOrigin, &intentHudTransform);
+        xr::VROverlay()->SetOverlayWidthInMeters(m_SpecialInfectedIntentSenseHudHandle, panelWidth);
         // Intent-sense HUD is an independent flat overlay. Do not inherit the main game HUD curvature.
-        vr::VROverlay()->SetOverlayCurvature(m_SpecialInfectedIntentSenseHudHandle, 0.0f);
+        xr::VROverlay()->SetOverlayCurvature(m_SpecialInfectedIntentSenseHudHandle, 0.0f);
     }
 
     for (size_t i = 0; i < m_HUDBottomHandles.size(); ++i)
     {
-        vr::VROverlay()->HideOverlay(m_HUDBottomHandles[i]);
+        xr::VROverlay()->HideOverlay(m_HUDBottomHandles[i]);
     }
 
     // Scope overlay placement:
@@ -5286,13 +5413,13 @@ void VR::RepositionOverlays()
         }
         else
         {
-            vr::TrackedDeviceIndex_t leftControllerIndex = m_System->GetTrackedDeviceIndexForControllerRole(vr::TrackedControllerRole_LeftHand);
-            vr::TrackedDeviceIndex_t rightControllerIndex = m_System->GetTrackedDeviceIndexForControllerRole(vr::TrackedControllerRole_RightHand);
+            xr::TrackedDeviceIndex_t leftControllerIndex = m_System->GetTrackedDeviceIndexForControllerRole(xr::TrackedControllerRole_LeftHand);
+            xr::TrackedDeviceIndex_t rightControllerIndex = m_System->GetTrackedDeviceIndexForControllerRole(xr::TrackedControllerRole_RightHand);
             if (m_LeftHanded)
                 std::swap(leftControllerIndex, rightControllerIndex);
 
-            const vr::TrackedDeviceIndex_t gunControllerIndex = rightControllerIndex;
-            if (gunControllerIndex != vr::k_unTrackedDeviceIndexInvalid)
+            const xr::TrackedDeviceIndex_t gunControllerIndex = rightControllerIndex;
+            if (gunControllerIndex != xr::k_unTrackedDeviceIndexInvalid)
             {
                 const float deg2rad = 3.14159265358979323846f / 180.0f;
 
@@ -5335,14 +5462,14 @@ void VR::RepositionOverlays()
                 mul33(Ry, Rx, RyRx);
                 mul33(Rz, RyRx, R);
 
-                vr::HmdMatrix34_t scopeRelative = {
+                xr::HmdMatrix34_t scopeRelative = {
                     R[0][0], R[0][1], R[0][2], m_ScopeOverlayXOffset,
                     R[1][0], R[1][1], R[1][2], m_ScopeOverlayYOffset,
                     R[2][0], R[2][1], R[2][2], m_ScopeOverlayZOffset
                 };
 
-                vr::VROverlay()->SetOverlayTransformTrackedDeviceRelative(m_ScopeHandle, gunControllerIndex, &scopeRelative);
-                vr::VROverlay()->SetOverlayWidthInMeters(m_ScopeHandle, (std::max)(0.01f, m_ScopeOverlayWidthMeters));
+                xr::VROverlay()->SetOverlayTransformTrackedDeviceRelative(m_ScopeHandle, gunControllerIndex, &scopeRelative);
+                xr::VROverlay()->SetOverlayWidthInMeters(m_ScopeHandle, (std::max)(0.01f, m_ScopeOverlayWidthMeters));
             }
         }
     }

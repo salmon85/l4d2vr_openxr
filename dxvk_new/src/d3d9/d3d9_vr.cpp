@@ -64,12 +64,20 @@ namespace dxvk {
       pDesc->PhysicalDevice = device->adapter()->handle();
       pDesc->Instance = device->instance()->handle();
       pDesc->Queue = device->queues().graphics.queueHandle;
-      pDesc->QueueFamilyIndex = device->queues().graphics.queueIndex;
+      pDesc->QueueFamilyIndex = device->queues().graphics.queueFamily;
+      pDesc->QueueIndex = device->queues().graphics.queueIndex;
 
       pDesc->Width = desc->Width;
       pDesc->Height = desc->Height;
       pDesc->Format = tex->GetFormatMapping().FormatColor;
       pDesc->SampleCount = uint32_t(image->info().sampleCount);
+      pDesc->Layout = image->info().layout;
+      pDesc->Usage = image->info().usage;
+
+      HANDLE sharedHandle = image->sharedHandle();
+      pDesc->SharedHandle = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(sharedHandle));
+      pDesc->SharedHandleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_KMT_BIT;
+      pDesc->SharedHandleValid = (sharedHandle != nullptr && sharedHandle != INVALID_HANDLE_VALUE) ? 1u : 0u;
 
       return D3D_OK;
     }
@@ -94,16 +102,12 @@ namespace dxvk {
           m_device->UpdateReShadeVrDepthAtlas(vr);
       }
 
-      VkImageSubresourceRange subresources = {
-        VK_IMAGE_ASPECT_COLOR_BIT,
-        0, image->info().mipLevels,
-        0, image->info().numLayers
-      };
-
-      m_device->TransformImage(
-        tex, &subresources,
-        image->info().layout,
-        VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+      // The native OpenXR backend performs its own GPU blit into an
+      // XrSwapchain image.  Leave the source image in its default layout so
+      // DXVK's layout tracking stays consistent; only flush/synchronize the
+      // D3D9 command stream here.
+      m_device->Flush();
+      m_device->SynchronizeCsThread(DxvkCsThread::SynchronizeAll);
 
       // This wait may need to be on all Faces and Mip Levels (2 loops).
       if (waitResourceIdle)
@@ -123,23 +127,22 @@ namespace dxvk {
     }
 
     HRESULT STDMETHODCALLTYPE LockSubmissionQueue() {
-      // Drain DXVK's CPU command stream while no other D3D9 call can append to it,
-      // then take the queue's native external-synchronization gate. Once acquired,
-      // the device lock can be released: Source may record the next frame, but DXVK's
-      // submit thread cannot touch VkQueue until OpenVR has submitted the stereo pair.
+      // The native OpenXR backend does not submit through the OpenVR
+      // compositor, so it does not need to hold DXVK's VkQueue across a
+      // compositor call.  Flush and synchronize the D3D9 command stream so a
+      // following BlitImages() sees a complete frame.  Taking the device lock
+      // here and releasing it at the end of this call is deliberate: the
+      // OpenXR frame thread later takes the same lock for its blit.
       D3D9DeviceLock lock = m_device->LockDeviceExclusive();
       m_device->Flush();
       m_device->SynchronizeCsThread(DxvkCsThread::SynchronizeAll);
-      m_device->GetDXVKDevice()->lockSubmission();
       return D3D_OK;
     }
 
     HRESULT STDMETHODCALLTYPE LockPreparedSubmissionQueue() {
-      // The producer has already flushed and synchronized the D3D9 command stream
-      // before publishing this texture generation. Only serialize native VkQueue
-      // access here; doing another CS-thread drain on every VR submit defeats queued
-      // rendering and puts the render-thread backlog on the Present thread.
-      m_device->GetDXVKDevice()->lockSubmission();
+      // The producer already flushed/synchronized before publishing.  The
+      // OpenXR blit path waits for GPU idle under the device lock, so no
+      // external VkQueue gate is required.
       return D3D_OK;
     }
 
@@ -154,7 +157,6 @@ namespace dxvk {
     }
 
     HRESULT STDMETHODCALLTYPE UnlockSubmissionQueue() {
-      m_device->GetDXVKDevice()->unlockSubmission();
       return D3D_OK;
     }
 
@@ -192,10 +194,10 @@ namespace dxvk {
       if (FAILED(res))
         return res;
 
-      std::memcpy(&backBufferData->m_VulkanData, &textureDesc, sizeof(vr::VRVulkanTextureData_t));
+      std::memcpy(&backBufferData->m_VulkanData, &textureDesc, sizeof(xr::VRVulkanTextureData_t));
       backBufferData->m_VRTexture.handle = &backBufferData->m_VulkanData;
-      backBufferData->m_VRTexture.eColorSpace = vr::ColorSpace_Auto;
-      backBufferData->m_VRTexture.eType = vr::TextureType_Vulkan;
+      backBufferData->m_VRTexture.eColorSpace = xr::ColorSpace_Auto;
+      backBufferData->m_VRTexture.eType = xr::TextureType_Vulkan;
 
       return res;
     }
@@ -214,6 +216,38 @@ namespace dxvk {
 
       *ppDevice = m_device;
       m_device->AddRef();
+      return D3D_OK;
+    }
+
+    HRESULT STDMETHODCALLTYPE GetVulkanHandles(
+            uint64_t* pInstance,
+            uint64_t* pPhysicalDevice,
+            uint64_t* pDevice,
+            uint64_t* pQueue,
+            uint32_t* pQueueFamilyIndex,
+            uint32_t* pQueueIndex) {
+      if (unlikely(!pInstance || !pPhysicalDevice || !pDevice || !pQueue ||
+                   !pQueueFamilyIndex || !pQueueIndex))
+        return E_POINTER;
+
+      const auto& device = m_device->GetDXVKDevice();
+      *pInstance = uint64_t(device->instance()->handle());
+      *pPhysicalDevice = uint64_t(device->adapter()->handle());
+      *pDevice = uint64_t(device->handle());
+      *pQueue = uint64_t(device->queues().graphics.queueHandle);
+      *pQueueFamilyIndex = device->queues().graphics.queueFamily;
+      *pQueueIndex = device->queues().graphics.queueIndex;
+      return D3D_OK;
+    }
+
+    HRESULT STDMETHODCALLTYPE BlitImages(
+            const D3D9_VR_BLIT_DESC* pDescs,
+            uint32_t unDescCount) {
+      if (unlikely(pDescs == nullptr || unDescCount == 0))
+        return D3DERR_INVALIDCALL;
+
+      D3D9DeviceLock lock = m_device->LockDeviceExclusive();
+      m_device->BlitImages(pDescs, unDescCount);
       return D3D_OK;
     }
 

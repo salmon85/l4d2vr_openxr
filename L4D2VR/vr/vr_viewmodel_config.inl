@@ -193,8 +193,15 @@ void VR::ResetPosition()
     }
 
     m_ResetPositionDeferredPending.store(0u, std::memory_order_release);
-    m_CameraAnchor += m_SetupOrigin - m_HmdPosAbs;
-    m_HeightOffset += m_SetupOrigin.z - m_HmdPosAbs.z;
+    // m_HmdPosAbs already contains the manual camera-height offset. Remove it
+    // before rebasing so recenter cannot bake the offset into the tracking anchor.
+    float cameraHeightOffsetUnits = m_CameraHeightOffsetMeters * m_VRScale;
+    if (!std::isfinite(cameraHeightOffsetUnits))
+        cameraHeightOffsetUnits = 0.0f;
+    Vector unoffsetHmdAbs = m_HmdPosAbs;
+    unoffsetHmdAbs.z -= cameraHeightOffsetUnits;
+    m_CameraAnchor += m_SetupOrigin - unoffsetHmdAbs;
+    m_HeightOffset += m_SetupOrigin.z - unoffsetHmdAbs.z;
     m_Roomscale1To1PrevValid = false;
     m_Roomscale1To1PrevCorrectedAbs = {};
     m_Roomscale1To1LastEngineEyeValid = false;
@@ -1126,7 +1133,7 @@ void VR::ParseConfigFile()
     m_InventoryAnchorColorG = inventoryColor[1];
     m_InventoryAnchorColorB = inventoryColor[2];
     m_InventoryAnchorColorA = inventoryColor[3];
-    const std::unordered_map<std::string, vr::VRActionHandle_t*> actionLookup =
+    const std::unordered_map<std::string, xr::VRActionHandle_t*> actionLookup =
     {
         {"jump", &m_ActionJump},
         {"primaryattack", &m_ActionPrimaryAttack},
@@ -1216,6 +1223,10 @@ void VR::ParseConfigFile()
     m_LeftHanded = getBool("LeftHanded", m_LeftHanded);
     m_LeftHandedSwapInputActions = getBool("LeftHandedSwapInputActions", m_LeftHandedSwapInputActions);
     m_VRScale = getFloat("VRScale", m_VRScale);
+    m_CameraHeightOffsetMeters = std::clamp(
+        getFloat("CameraHeightOffsetMeters", m_CameraHeightOffsetMeters),
+        -1.5f,
+        2.0f);
     m_VRNearClipAdaptive = getBool("VRNearClipAdaptive", m_VRNearClipAdaptive);
     m_VRNearClipSelfBody = getBool("VRNearClipSelfBody", m_VRNearClipSelfBody);
     m_VRNearClipDebugLog = getBool("VRNearClipDebugLog", m_VRNearClipDebugLog);

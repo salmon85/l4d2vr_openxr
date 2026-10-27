@@ -1438,6 +1438,21 @@ void VR::UpdateTracking()
         --m_TeleportCameraClipSuppressFrames;
 
     m_HmdPosAbs = m_CameraAnchor - Vector(0, 0, 64) + m_HmdPosLocalInWorld;
+    // Raise/lower the entire tracked VR rig without changing the server-space
+    // body origin or the automatic recenter calibration.
+    const float cameraHeightOffsetUnits = m_CameraHeightOffsetMeters * m_VRScale;
+    if (std::isfinite(cameraHeightOffsetUnits))
+        m_HmdPosAbs.z += cameraHeightOffsetUnits;
+
+    if (cameraHeightOffsetUnits != 0.0f && m_SetupOrigin.z > 0.0f) {
+        static std::atomic<int> s_cameraHeightLogBudget{ 3 };
+        if (s_cameraHeightLogBudget.fetch_sub(1, std::memory_order_relaxed) > 0) {
+            Game::logMsg("[VR][CameraHeight] offsetM=%.3f offsetU=%.2f hmdAbsZ=%.2f setupOriginZ=%.2f heightOffset=%.2f physicalCrouch=%d",
+                m_CameraHeightOffsetMeters, cameraHeightOffsetUnits,
+                m_HmdPosAbs.z, m_SetupOrigin.z, m_HeightOffset,
+                m_Roomscale1To1PhysicalCrouchActive ? 1 : 0);
+        }
+    }
 
     if (!m_TeleportVisualScoutActive && !suppressTeleportCameraClip)
     {
@@ -1725,17 +1740,17 @@ void VR::UpdateTracking()
         VRWorldPoseTrackingSnapshot snapshot{};
         snapshot.initialized = true;
         snapshot.hmdValid =
-            m_Poses[vr::k_unTrackedDeviceIndex_Hmd].bPoseIsValid;
+            m_Poses[xr::k_unTrackedDeviceIndex_Hmd].bPoseIsValid;
 
-        const vr::TrackedDeviceIndex_t physicalLeftIndex =
+        const xr::TrackedDeviceIndex_t physicalLeftIndex =
             GetPhysicalControllerIndexForHand(true);
-        const vr::TrackedDeviceIndex_t physicalRightIndex =
+        const xr::TrackedDeviceIndex_t physicalRightIndex =
             GetPhysicalControllerIndexForHand(false);
         snapshot.leftHandValid =
-            physicalLeftIndex < vr::k_unMaxTrackedDeviceCount &&
+            physicalLeftIndex < xr::k_unMaxTrackedDeviceCount &&
             m_Poses[physicalLeftIndex].bPoseIsValid;
         snapshot.rightHandValid =
-            physicalRightIndex < vr::k_unMaxTrackedDeviceCount &&
+            physicalRightIndex < xr::k_unMaxTrackedDeviceCount &&
             m_Poses[physicalRightIndex].bPoseIsValid;
 
 		// World-model poses are player-relative, not camera-anchor-relative. The

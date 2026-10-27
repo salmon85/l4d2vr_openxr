@@ -447,24 +447,50 @@ void VrHandSystem::ReportWarningOnce(const std::string& warning)
 bool VrHandSystem::ResolveSteamVrAssetPath(const char* fileName, std::string& outPath) const
 {
     outPath.clear();
-
-    std::vector<char> buffer(vr::k_unMaxPropertyStringSize, '\0');
-    uint32_t required = 0;
-    if (!vr::VR_GetRuntimePath(buffer.data(), static_cast<uint32_t>(buffer.size()), &required))
+    if (!fileName || !*fileName)
         return false;
-    if (required > buffer.size())
-    {
-        buffer.assign(static_cast<size_t>(required) + 1u, '\0');
-        if (!vr::VR_GetRuntimePath(buffer.data(), static_cast<uint32_t>(buffer.size()), &required))
-            return false;
+
+    std::error_code ec;
+    auto tryPath = [&](const std::filesystem::path& path) -> bool {
+        if (std::filesystem::exists(path, ec) && !ec) {
+            outPath = path.string();
+            return true;
+        }
+        return false;
+    };
+
+    // Local copies shipped with the mod (preferred under OpenXR, where there is
+    // no SteamVR runtime path to query).
+    const std::filesystem::path cwd = std::filesystem::current_path(ec);
+    if (!ec) {
+        if (tryPath(cwd / "VR" / "vr_hands" / fileName))
+            return true;
+        if (tryPath(cwd / "VR" / "rendermodels" / "vr_glove" / fileName))
+            return true;
     }
-    if (buffer.empty() || buffer.front() == '\0')
-        return false;
 
-    const std::filesystem::path path = std::filesystem::path(buffer.data()) /
-        "resources" / "rendermodels" / "vr_glove" / fileName;
-    outPath = path.string();
-    return std::filesystem::exists(path);
+    // SteamVR install, if present.  OpenVR used to expose this through
+    // VR_GetRuntimePath(); OpenXR has no equivalent, so discover it directly.
+    std::vector<std::filesystem::path> steamRoots;
+    char steamPath[MAX_PATH] = {};
+    DWORD steamPathSize = sizeof(steamPath);
+    if (RegGetValueA(HKEY_CURRENT_USER, "Software\\Valve\\Steam", "SteamPath",
+            RRF_RT_REG_SZ, nullptr, steamPath, &steamPathSize) == ERROR_SUCCESS) {
+        steamRoots.emplace_back(steamPath);
+    }
+    char programFilesX86[MAX_PATH] = {};
+    if (GetEnvironmentVariableA("ProgramFiles(x86)", programFilesX86, sizeof(programFilesX86)) > 0)
+        steamRoots.emplace_back(std::filesystem::path(programFilesX86) / "Steam");
+    char programFiles[MAX_PATH] = {};
+    if (GetEnvironmentVariableA("ProgramFiles", programFiles, sizeof(programFiles)) > 0)
+        steamRoots.emplace_back(std::filesystem::path(programFiles) / "Steam");
+
+    for (const auto& root : steamRoots) {
+        if (tryPath(root / "steamapps" / "common" / "SteamVR" / "resources" /
+                "rendermodels" / "vr_glove" / fileName))
+            return true;
+    }
+    return false;
 }
 
 bool VrHandSystem::EnsureStandaloneMagazineBoxLoaded(
@@ -816,7 +842,7 @@ bool VrHandSystem::EnsureAssetsLoaded(bool debugLog)
 }
 
 bool VrHandSystem::EnsureInitialized(
-    vr::IVRInput* input,
+    xr::Input* input,
     bool rightUseViewmodelPose,
     bool twoHandedViewmodelPose,
     bool leftHanded,
@@ -842,9 +868,9 @@ bool VrHandSystem::EnsureInitialized(
         if (hand.skeletonInitialized)
             continue;
 
-        if (hand.action == vr::k_ulInvalidActionHandle &&
-            (input->GetActionHandle(hand.actionPath, &hand.action) != vr::VRInputError_None ||
-                hand.action == vr::k_ulInvalidActionHandle))
+        if (hand.action == xr::k_ulInvalidActionHandle &&
+            (input->GetActionHandle(hand.actionPath, &hand.action) != xr::VRInputError_None ||
+                hand.action == xr::k_ulInvalidActionHandle))
         {
             m_DependencyUnavailable = true;
             m_DependencyFailureReason = std::string("missing SteamVR skeletal action: ") +
@@ -852,9 +878,9 @@ bool VrHandSystem::EnsureInitialized(
             return false;
         }
 
-        vr::InputSkeletalActionData_t actionData{};
-        const vr::EVRInputError actionDataResult = input->GetSkeletalActionData(hand.action, &actionData, sizeof(actionData));
-        if (actionDataResult != vr::VRInputError_None || !actionData.bActive)
+        xr::InputSkeletalActionData_t actionData{};
+        const xr::EVRInputError actionDataResult = input->GetSkeletalActionData(hand.action, &actionData, sizeof(actionData));
+        if (actionDataResult != xr::VRInputError_None || !actionData.bActive)
         {
             if (debugLog)
             {
@@ -895,8 +921,8 @@ bool VrHandSystem::EnsureInitialized(
     if (m_Initialized && debugLog && !m_DebugInitializationLogged)
     {
         m_DebugInitializationLogged = true;
-        const char* leftMode = usesViewmodelPose(0u) ? "viewmodel" : "openvr";
-        const char* rightMode = usesViewmodelPose(1u) ? "viewmodel" : "openvr";
+        const char* leftMode = usesViewmodelPose(0u) ? "viewmodel" : "native";
+        const char* rightMode = usesViewmodelPose(1u) ? "viewmodel" : "native";
         Game::logMsg(
             "[VR][Hands] initialized left=%s/%u vertices right=%s/%u vertices",
             leftMode,
@@ -1208,7 +1234,7 @@ bool VrHandSystem::BuildViewmodelWorld(
 }
 
 void VrHandSystem::UpdatePoses(
-    vr::IVRInput* input,
+    xr::Input* input,
     bool motionRangeWithoutController,
     bool rightUseViewmodelPose,
     bool twoHandedViewmodelPose,
@@ -1237,9 +1263,9 @@ void VrHandSystem::UpdatePoses(
     ViewmodelPoseState& rightViewmodelState =
         prepareState(1, rightUseViewmodelPose, physicalHandIndexForGameplay(1));
 
-    const vr::EVRSkeletalMotionRange motionRange = motionRangeWithoutController
-        ? vr::VRSkeletalMotionRange_WithoutController
-        : vr::VRSkeletalMotionRange_WithController;
+    const xr::EVRSkeletalMotionRange motionRange = motionRangeWithoutController
+        ? xr::VRSkeletalMotionRange_WithoutController
+        : xr::VRSkeletalMotionRange_WithController;
 
     VrHandFingerCurlOverride magazineGripOverride{};
     if (leftHandMagazineGripPose)
@@ -1333,8 +1359,8 @@ void VrHandSystem::UpdatePoses(
                 m_Hands[1].paletteValid ? 1 : 0,
                 leftViewmodelState.paletteValid ? 1 : 0,
                 rightViewmodelState.paletteValid ? 1 : 0,
-                twoHandedViewmodelPose ? (hasLeftViewmodelPose ? "viewmodel" : "viewmodel-waiting") : "openvr",
-                rightUseViewmodelPose ? (hasRightViewmodelPose ? "viewmodel" : "viewmodel-waiting") : "openvr",
+                twoHandedViewmodelPose ? (hasLeftViewmodelPose ? "viewmodel" : "viewmodel-waiting") : "native",
+                rightUseViewmodelPose ? (hasRightViewmodelPose ? "viewmodel" : "viewmodel-waiting") : "native",
                 motionRangeWithoutController ? "without-controller" : "with-controller");
         }
     }
@@ -1342,7 +1368,7 @@ void VrHandSystem::UpdatePoses(
 
 bool VrHandSystem::DrawForEye(
     IDirect3DDevice9* device,
-    vr::IVRInput* input,
+    xr::Input* input,
     const CViewSetup& view,
     int eyeIndex,
     float vrScale,

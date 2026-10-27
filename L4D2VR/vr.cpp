@@ -550,16 +550,16 @@ void VR::UpdateHudLiftGestureState(bool inGame)
         return;
     }
 
-    vr::TrackedDeviceIndex_t leftControllerIndex =
-        m_System->GetTrackedDeviceIndexForControllerRole(vr::TrackedControllerRole_LeftHand);
-    vr::TrackedDeviceIndex_t rightControllerIndex =
-        m_System->GetTrackedDeviceIndexForControllerRole(vr::TrackedControllerRole_RightHand);
+    xr::TrackedDeviceIndex_t leftControllerIndex =
+        m_System->GetTrackedDeviceIndexForControllerRole(xr::TrackedControllerRole_LeftHand);
+    xr::TrackedDeviceIndex_t rightControllerIndex =
+        m_System->GetTrackedDeviceIndexForControllerRole(xr::TrackedControllerRole_RightHand);
     if (m_LeftHanded)
         std::swap(leftControllerIndex, rightControllerIndex);
 
     const bool leftControllerValid =
-        leftControllerIndex != vr::k_unTrackedDeviceIndexInvalid &&
-        leftControllerIndex < vr::k_unMaxTrackedDeviceCount &&
+        leftControllerIndex != xr::k_unTrackedDeviceIndexInvalid &&
+        leftControllerIndex < xr::k_unMaxTrackedDeviceCount &&
         m_Poses[leftControllerIndex].bPoseIsValid;
 
     // When the off-hand is actively gripping a two-handed weapon, its normal aiming
@@ -5296,7 +5296,7 @@ void VR::UpdateDamageFeedback()
         }
         else
         {
-            vr::InputAnalogActionData_t turnActionData{};
+            xr::InputAnalogActionData_t turnActionData{};
             const bool turnActionActive = GetAnalogActionData(m_ActionTurn, turnActionData)
                 && std::fabs(turnActionData.x) > 0.2f;
             const float angDelta =
@@ -7762,10 +7762,10 @@ bool VR::EnsureKillIndicatorOverlayTexture(int materialIndex, int width, int hei
             D3D9_TEXTURE_VR_DESC desc{};
             if (SUCCEEDED(g_D3DVR9->GetVRDesc(texture.d3dSurface, &desc)))
             {
-                std::memcpy(&texture.sharedTexture.m_VulkanData, &desc, sizeof(vr::VRVulkanTextureData_t));
+                std::memcpy(&texture.sharedTexture.m_VulkanData, &desc, sizeof(xr::VRVulkanTextureData_t));
                 texture.sharedTexture.m_VRTexture.handle = &texture.sharedTexture.m_VulkanData;
-                texture.sharedTexture.m_VRTexture.eColorSpace = vr::ColorSpace_Auto;
-                texture.sharedTexture.m_VRTexture.eType = vr::TextureType_Vulkan;
+                texture.sharedTexture.m_VRTexture.eColorSpace = xr::ColorSpace_Auto;
+                texture.sharedTexture.m_VRTexture.eType = xr::TextureType_Vulkan;
                 texture.width = width;
                 texture.height = height;
             }
@@ -7849,9 +7849,9 @@ void VR::DestroyKillIndicatorOverlay(ActiveKillIndicator& indicator)
     }
 
     KillIndicatorOverlaySlot& slot = m_KillIndicatorOverlaySlots[indicator.overlaySlot];
-    if (slot.overlayHandle != vr::k_ulOverlayHandleInvalid)
+    if (slot.overlayHandle != xr::k_ulOverlayHandleInvalid)
     {
-        vr::IVROverlay* overlay = m_Overlay ? m_Overlay : vr::VROverlay();
+        xr::Overlay* overlay = m_Overlay ? m_Overlay : xr::VROverlay();
         if (overlay)
         {
             std::lock_guard<std::mutex> lock(m_VROverlayMutex);
@@ -7869,10 +7869,10 @@ bool VR::EnsureKillIndicatorOverlaySlot(int slotIndex)
         return false;
 
     KillIndicatorOverlaySlot& slot = m_KillIndicatorOverlaySlots[slotIndex];
-    if (slot.overlayHandle != vr::k_ulOverlayHandleInvalid)
+    if (slot.overlayHandle != xr::k_ulOverlayHandleInvalid)
         return true;
 
-    vr::IVROverlay* overlay = m_Overlay ? m_Overlay : vr::VROverlay();
+    xr::Overlay* overlay = m_Overlay ? m_Overlay : xr::VROverlay();
     if (!overlay)
         return false;
 
@@ -7880,16 +7880,16 @@ bool VR::EnsureKillIndicatorOverlaySlot(int slotIndex)
     const std::string name = "KillIndicatorOverlay_" + std::to_string(slotIndex);
 
     std::lock_guard<std::mutex> lock(m_VROverlayMutex);
-    const vr::EVROverlayError createError = overlay->CreateOverlay(key.c_str(), name.c_str(), &slot.overlayHandle);
-    if (createError != vr::VROverlayError_None)
+    const xr::EVROverlayError createError = overlay->CreateOverlay(key.c_str(), name.c_str(), &slot.overlayHandle);
+    if (createError != xr::VROverlayError_None)
     {
-        slot.overlayHandle = vr::k_ulOverlayHandleInvalid;
+        slot.overlayHandle = xr::k_ulOverlayHandleInvalid;
         return false;
     }
 
-    static const vr::VRTextureBounds_t fullTextureBounds{ 0.0f, 0.0f, 1.0f, 1.0f };
+    static const xr::VRTextureBounds_t fullTextureBounds{ 0.0f, 0.0f, 1.0f, 1.0f };
     overlay->SetOverlayTexelAspect(slot.overlayHandle, 1.0f);
-    overlay->SetOverlayFlag(slot.overlayHandle, vr::VROverlayFlags_IgnoreTextureAlpha, false);
+    overlay->SetOverlayFlag(slot.overlayHandle, xr::VROverlayFlags_IgnoreTextureAlpha, false);
     overlay->SetOverlayTextureBounds(slot.overlayHandle, &fullTextureBounds);
     slot.materialIndex = -1;
     slot.visible = false;
@@ -8108,7 +8108,7 @@ bool VR::BuildKillIndicatorOverlayPixels(IMaterial* material, std::vector<uint8_
     return !outPixels.empty();
 }
 
-bool VR::ComputeKillIndicatorOverlayTransform(const Vector& worldPos, vr::HmdMatrix34_t& outTransform) const
+bool VR::ComputeKillIndicatorOverlayTransform(const Vector& worldPos, xr::HmdMatrix34_t& outTransform) const
 {
     Vector srcRight = m_HmdRight;
     Vector srcUp = m_HmdUp;
@@ -8144,11 +8144,11 @@ void VR::UpdateKillIndicatorOverlays()
 
     {
         std::lock_guard<std::mutex> lock(m_VROverlayMutex);
-        if (vr::IVROverlay* current = vr::VROverlay())
+        if (xr::Overlay* current = xr::VROverlay())
             m_Overlay = current;
     }
 
-    vr::IVROverlay* overlay = m_Overlay ? m_Overlay : vr::VROverlay();
+    xr::Overlay* overlay = m_Overlay ? m_Overlay : xr::VROverlay();
     if (!overlay || !m_Compositor)
         return;
 
@@ -8234,13 +8234,13 @@ void VR::UpdateKillIndicatorOverlays()
             {
                 KillIndicatorOverlaySlot& slot = m_KillIndicatorOverlaySlots[slotsToBind[i]];
                 const int materialIndex = GetPreboundKillIndicatorMaterialForSlot(slotsToBind[i]);
-                const vr::EVROverlayError textureError = overlay->SetOverlayTexture(
+                const xr::EVROverlayError textureError = overlay->SetOverlayTexture(
                     slot.overlayHandle,
                     &m_KillIndicatorOverlayTextures[materialIndex].sharedTexture.m_VRTexture);
-                if (textureError == vr::VROverlayError_None)
+                if (textureError == xr::VROverlayError_None)
                     slot.materialIndex = materialIndex;
-                else if (textureError == vr::VROverlayError_InvalidHandle)
-                    slot.overlayHandle = vr::k_ulOverlayHandleInvalid;
+                else if (textureError == xr::VROverlayError_InvalidHandle)
+                    slot.overlayHandle = xr::k_ulOverlayHandleInvalid;
             }
             g_D3DVR9->UnlockSubmissionQueue();
         }
@@ -8273,7 +8273,7 @@ void VR::UpdateKillIndicatorOverlays()
         }
 
         KillIndicatorOverlaySlot& slot = m_KillIndicatorOverlaySlots[indicator.overlaySlot];
-        if (slot.overlayHandle == vr::k_ulOverlayHandleInvalid)
+        if (slot.overlayHandle == xr::k_ulOverlayHandleInvalid)
             continue;
 
         const float lifetime = GetActiveIndicatorLifetimeSeconds(indicator, m_KillIndicatorLifetimeSeconds);
@@ -8298,7 +8298,7 @@ void VR::UpdateKillIndicatorOverlays()
             continue;
         }
 
-        vr::HmdMatrix34_t transform{};
+        xr::HmdMatrix34_t transform{};
         if (!ComputeKillIndicatorOverlayTransform(drawPos, transform))
             continue;
 
@@ -8317,17 +8317,17 @@ void VR::UpdateKillIndicatorOverlays()
             continue;
 
         std::lock_guard<std::mutex> lock(m_VROverlayMutex);
-        overlay->SetOverlayTransformTrackedDeviceRelative(slot.overlayHandle, vr::k_unTrackedDeviceIndex_Hmd, &transform);
+        overlay->SetOverlayTransformTrackedDeviceRelative(slot.overlayHandle, xr::k_unTrackedDeviceIndex_Hmd, &transform);
         overlay->SetOverlayWidthInMeters(slot.overlayHandle, widthMeters);
         overlay->SetOverlayAlpha(slot.overlayHandle, alpha);
         if (!slot.visible)
         {
-            const vr::EVROverlayError showError = overlay->ShowOverlay(slot.overlayHandle);
-            if (showError != vr::VROverlayError_None)
+            const xr::EVROverlayError showError = overlay->ShowOverlay(slot.overlayHandle);
+            if (showError != xr::VROverlayError_None)
             {
                 slot.visible = false;
-                if (showError == vr::VROverlayError_InvalidHandle)
-                    slot.overlayHandle = vr::k_ulOverlayHandleInvalid;
+                if (showError == xr::VROverlayError_InvalidHandle)
+                    slot.overlayHandle = xr::k_ulOverlayHandleInvalid;
                 continue;
             }
             slot.visible = true;
@@ -10314,10 +10314,10 @@ bool VR::ApplyScopeLensPostProcess()
             hr = g_D3DVR9->GetVRDesc(m_D9ScopeLensSurface, &vrDesc);
             if (SUCCEEDED(hr))
             {
-                std::memcpy(&m_VKScopeLens.m_VulkanData, &vrDesc, sizeof(vr::VRVulkanTextureData_t));
+                std::memcpy(&m_VKScopeLens.m_VulkanData, &vrDesc, sizeof(xr::VRVulkanTextureData_t));
                 m_VKScopeLens.m_VRTexture.handle = &m_VKScopeLens.m_VulkanData;
-                m_VKScopeLens.m_VRTexture.eColorSpace = vr::ColorSpace_Auto;
-                m_VKScopeLens.m_VRTexture.eType = vr::TextureType_Vulkan;
+                m_VKScopeLens.m_VRTexture.eColorSpace = xr::ColorSpace_Auto;
+                m_VKScopeLens.m_VRTexture.eType = xr::TextureType_Vulkan;
             }
         }
 
@@ -11067,7 +11067,7 @@ void VR::DrawKillIndicators(IMatRenderContext* renderContext, ITexture* hudTextu
     if (!m_KillIndicatorEnabled || m_ActiveKillIndicators.empty() || !hudTexture)
         return;
 
-    if (m_IsVREnabled && (m_Overlay || vr::VROverlay()))
+    if (m_IsVREnabled && (m_Overlay || xr::VROverlay()))
         return;
 
     if (!m_Game || !m_Game->m_EngineClient || !m_Game->m_EngineClient->IsInGame())

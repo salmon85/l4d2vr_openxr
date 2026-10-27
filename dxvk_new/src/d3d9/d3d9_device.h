@@ -38,6 +38,8 @@
 #include <unordered_map>
 
 #include "../util/util_flush.h"
+
+struct D3D9_VR_BLIT_DESC;
 #include "../util/util_lru.h"
 
 class VR;
@@ -1194,6 +1196,12 @@ namespace dxvk {
     // Called by the queued-render completion transaction before the submit
     // surfaces are transitioned and published to OpenVR.
     void DrawQueuedEyeSubmitOverlays(VR* vr);
+
+    // Native OpenXR backend: blit DXVK-backed D3D9 textures into OpenXR
+    // Vulkan swapchain images.  Emits one DXVK command chunk containing all
+    // requested blits, then waits for the GPU so the caller can release the
+    // XrSwapchain images immediately afterwards.
+    void BlitImages(const D3D9_VR_BLIT_DESC* pDescs, uint32_t unDescCount);
 
     // Builds a side-by-side, single-sample depth atlas for ReShade's native
     // OpenVR Vulkan effect runtime. The work is appended to the existing DXVK

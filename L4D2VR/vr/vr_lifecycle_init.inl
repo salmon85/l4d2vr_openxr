@@ -100,7 +100,7 @@ namespace
     };
 
     inline bool AlignReShadeVrEyeBounds(
-        vr::VRTextureBounds_t (&bounds)[2],
+        xr::VRTextureBounds_t (&bounds)[2],
         uint32_t textureWidth,
         uint32_t textureHeight,
         ReShadeVrBoundsAlignmentInfo& info)
@@ -116,7 +116,7 @@ namespace
             uint32_t bottom = 0;
         };
 
-        auto getRegion = [&](const vr::VRTextureBounds_t& eyeBounds, PixelRegion& region)
+        auto getRegion = [&](const xr::VRTextureBounds_t& eyeBounds, PixelRegion& region)
             {
                 const float u0 = std::clamp((std::min)(eyeBounds.uMin, eyeBounds.uMax), 0.0f, 1.0f);
                 const float u1 = std::clamp((std::max)(eyeBounds.uMin, eyeBounds.uMax), 0.0f, 1.0f);
@@ -1045,20 +1045,24 @@ VR::VR(Game* game)
 
     char errorString[MAX_STR_LEN];
 
-    vr::HmdError error = vr::VRInitError_None;
-    m_System = vr::VR_Init(&error, vr::VRApplication_Scene);
-
-    if (error != vr::VRInitError_None)
+    if (!xr::Initialize("Left 4 Dead 2 VR"))
     {
-        snprintf(errorString, MAX_STR_LEN, "VR_Init failed: %s", vr::VR_GetVRInitErrorAsEnglishDescription(error));
+        snprintf(errorString, MAX_STR_LEN, "OpenXR initialization failed: %s", xr::GetInitErrorDescription(xr::GetInitError()));
         Game::errorMsg(errorString);
+        xr::Shutdown();
         return;
     }
 
-    m_Compositor = vr::VRCompositor();
-    if (!m_Compositor)
+    m_System = xr::VRSystem();
+    m_Compositor = xr::VRCompositor();
+    m_Input = xr::VRInput();
+    m_Overlay = xr::VROverlay();
+    // DXVK must know this before the eye/HUD render targets are created so it
+    // asks the Vulkan driver for KMT shared images.
+    m_OpenXrHelperBridgeActive = true;
+    if (!m_System || !m_Compositor || !m_Input || !m_Overlay)
     {
-        Game::errorMsg("Compositor initialization failed.");
+        Game::errorMsg("OpenXR backend did not expose its core interfaces.");
         return;
     }
 
@@ -1071,17 +1075,28 @@ VR::VR(Game* game)
 
     ConfigureExplicitTiming();
 
-    m_Input = vr::VRInput();
-    m_System = vr::OpenVRInternal_ModuleContext().VRSystem();
+    // The mod's DX9 proxy starts this thread before the game creates its
+    // D3D9 device.  OpenXR needs DXVK's Vulkan instance/device, so finish
+    // session creation as soon as the device bridge exists.
+    while (!g_D3DVR9)
+        Sleep(10);
+
+    if (!xr::CreateSessionFromD3D9())
+    {
+        snprintf(errorString, MAX_STR_LEN, "OpenXR session creation failed: %s", xr::GetInitErrorDescription(xr::GetInitError()));
+        Game::errorMsg(errorString);
+        xr::Shutdown();
+        return;
+    }
 
     m_System->GetRecommendedRenderTargetSize(&m_RenderWidth, &m_RenderHeight);
     m_AntiAliasing = 0;
 
     float l_left = 0.0f, l_right = 0.0f, l_top = 0.0f, l_bottom = 0.0f;
-    m_System->GetProjectionRaw(vr::EVREye::Eye_Left, &l_left, &l_right, &l_top, &l_bottom);
+    m_System->GetProjectionRaw(xr::Eye_Left, &l_left, &l_right, &l_top, &l_bottom);
 
     float r_left = 0.0f, r_right = 0.0f, r_top = 0.0f, r_bottom = 0.0f;
-    m_System->GetProjectionRaw(vr::EVREye::Eye_Right, &r_left, &r_right, &r_top, &r_bottom);
+    m_System->GetProjectionRaw(xr::Eye_Right, &r_left, &r_right, &r_top, &r_bottom);
 
     float tanHalfFov[2];
 
@@ -1194,14 +1209,11 @@ VR::VR(Game* game)
     std::thread configParser(&VR::WaitForConfigUpdate, this);
     configParser.detach();
 
-    while (!g_D3DVR9)
-        Sleep(10);
-
     if (m_ReShadeVRCompat)
         m_ReShadeVRCompat = L4D2VR_InitializeReShadeVRBridge();
 
     RefreshBackBufferTexture(true);
-    m_Overlay = vr::VROverlay();
+    m_Overlay = xr::VROverlay();
     m_Overlay->CreateOverlay("MenuOverlayKey", "MenuOverlay", &m_MainMenuHandle);
     m_Overlay->CreateOverlay("HUDOverlayTopKey", "HUDOverlayTop", &m_HUDTopHandle);
 
@@ -1220,29 +1232,30 @@ VR::VR(Game* game)
     // Standalone HUD panel for special infected intent sense.
     m_Overlay->CreateOverlay("SpecialInfectedIntentSenseHudOverlayKey", "SpecialInfectedIntentSenseHUD", &m_SpecialInfectedIntentSenseHudHandle);
 
-    m_Overlay->SetOverlayInputMethod(m_MainMenuHandle, vr::VROverlayInputMethod_Mouse);
-    m_Overlay->SetOverlayInputMethod(m_HUDTopHandle, vr::VROverlayInputMethod_Mouse);
-    for (vr::VROverlayHandle_t& overlay : m_HUDBottomHandles)
+    m_Overlay->SetOverlayInputMethod(m_MainMenuHandle, xr::VROverlayInputMethod_Mouse);
+    m_Overlay->SetOverlayFlag(m_MainMenuHandle, xr::VROverlayFlags_IgnoreTextureAlpha, true);
+    m_Overlay->SetOverlayInputMethod(m_HUDTopHandle, xr::VROverlayInputMethod_Mouse);
+    for (xr::VROverlayHandle_t& overlay : m_HUDBottomHandles)
     {
-        m_Overlay->SetOverlayInputMethod(overlay, vr::VROverlayInputMethod_Mouse);
+        m_Overlay->SetOverlayInputMethod(overlay, xr::VROverlayInputMethod_Mouse);
     }
 
     // Scope overlay is purely visual
-    m_Overlay->SetOverlayInputMethod(m_ScopeHandle, vr::VROverlayInputMethod_None);
-    m_Overlay->SetOverlayInputMethod(m_RearMirrorHandle, vr::VROverlayInputMethod_None);
-    m_Overlay->SetOverlayInputMethod(m_LeftWristHudHandle, vr::VROverlayInputMethod_None);
-    m_Overlay->SetOverlayInputMethod(m_RightAmmoHudHandle, vr::VROverlayInputMethod_None);
-    m_Overlay->SetOverlayInputMethod(m_SpecialInfectedIntentSenseHudHandle, vr::VROverlayInputMethod_None);
+    m_Overlay->SetOverlayInputMethod(m_ScopeHandle, xr::VROverlayInputMethod_None);
+    m_Overlay->SetOverlayInputMethod(m_RearMirrorHandle, xr::VROverlayInputMethod_None);
+    m_Overlay->SetOverlayInputMethod(m_LeftWristHudHandle, xr::VROverlayInputMethod_None);
+    m_Overlay->SetOverlayInputMethod(m_RightAmmoHudHandle, xr::VROverlayInputMethod_None);
+    m_Overlay->SetOverlayInputMethod(m_SpecialInfectedIntentSenseHudHandle, xr::VROverlayInputMethod_None);
     // Scope lens uses alpha from the RTT post-process so the overlay is a real circular lens.
-    m_Overlay->SetOverlayFlag(m_ScopeHandle, vr::VROverlayFlags_IgnoreTextureAlpha, false);
-    m_Overlay->SetOverlayFlag(m_RearMirrorHandle, vr::VROverlayFlags_IgnoreTextureAlpha, true);
+    m_Overlay->SetOverlayFlag(m_ScopeHandle, xr::VROverlayFlags_IgnoreTextureAlpha, false);
+    m_Overlay->SetOverlayFlag(m_RearMirrorHandle, xr::VROverlayFlags_IgnoreTextureAlpha, true);
 
 
-    m_Overlay->SetOverlayFlag(m_MainMenuHandle, vr::VROverlayFlags_SendVRDiscreteScrollEvents, true);
-    m_Overlay->SetOverlayFlag(m_HUDTopHandle, vr::VROverlayFlags_SendVRDiscreteScrollEvents, true);
-    for (vr::VROverlayHandle_t& overlay : m_HUDBottomHandles)
+    m_Overlay->SetOverlayFlag(m_MainMenuHandle, xr::VROverlayFlags_SendVRDiscreteScrollEvents, true);
+    m_Overlay->SetOverlayFlag(m_HUDTopHandle, xr::VROverlayFlags_SendVRDiscreteScrollEvents, true);
+    for (xr::VROverlayHandle_t& overlay : m_HUDBottomHandles)
     {
-        m_Overlay->SetOverlayFlag(overlay, vr::VROverlayFlags_SendVRDiscreteScrollEvents, true);
+        m_Overlay->SetOverlayFlag(overlay, xr::VROverlayFlags_SendVRDiscreteScrollEvents, true);
     }
 
     int windowWidth = 0;
@@ -1257,14 +1270,14 @@ VR::VR(Game* game)
     if (windowHeight <= 0)
         windowHeight = static_cast<int>((std::max)(1u, m_RenderHeight));
 
-    const vr::HmdVector2_t mouseScaleHUD = { windowWidth, windowHeight };
+    const xr::HmdVector2_t mouseScaleHUD = { windowWidth, windowHeight };
     m_Overlay->SetOverlayMouseScale(m_HUDTopHandle, &mouseScaleHUD);
-    for (vr::VROverlayHandle_t& overlay : m_HUDBottomHandles)
+    for (xr::VROverlayHandle_t& overlay : m_HUDBottomHandles)
     {
         m_Overlay->SetOverlayMouseScale(overlay, &mouseScaleHUD);
     }
 
-    const vr::HmdVector2_t mouseScaleMenu = { m_RenderWidth, m_RenderHeight };
+    const xr::HmdVector2_t mouseScaleMenu = { m_RenderWidth, m_RenderHeight };
     m_Overlay->SetOverlayMouseScale(m_MainMenuHandle, &mouseScaleMenu);
 
     if (!m_RenderFrameReadyEvent)
@@ -1283,7 +1296,7 @@ void VR::ConfigureExplicitTiming()
         return;
 
     m_Compositor->SetExplicitTimingMode(
-        vr::VRCompositorTimingMode_Explicit_ApplicationPerformsPostPresentHandoff);
+        xr::VRCompositorTimingMode_Explicit_ApplicationPerformsPostPresentHandoff);
 
     m_CompositorExplicitTiming = true;
 }
@@ -1297,8 +1310,8 @@ int VR::SetActionManifest(const char* fileName)
 
     const std::string vrHandsManifestPath = BuildVrHandsActionManifestPath(path);
     const char* effectiveManifestPath = vrHandsManifestPath.empty() ? path : vrHandsManifestPath.c_str();
-    const vr::EVRInputError manifestResult = m_Input->SetActionManifestPath(effectiveManifestPath);
-    if (manifestResult != vr::VRInputError_None)
+    const xr::EVRInputError manifestResult = m_Input->SetActionManifestPath(effectiveManifestPath);
+    if (manifestResult != xr::VRInputError_None)
     {
         Game::errorMsg("SetActionManifestPath failed");
     }
@@ -1365,7 +1378,7 @@ void VR::InstallApplicationManifest(const char* fileName)
     char path[MAX_STR_LEN];
     sprintf_s(path, MAX_STR_LEN, "%s\\VR\\%s", currentDir, fileName);
 
-    vr::VRApplications()->AddApplicationManifest(path);
+    xr::VRApplications()->AddApplicationManifest(path);
 }
 
 

@@ -39,17 +39,17 @@ namespace
     int MagazineInteractionFindClientEntityIndex(Game* game, const void* entity);
 
     bool TryReadOpenVRSkeletalSummary(
-        vr::IVRInput* input,
-        vr::VRActionHandle_t action,
-        vr::EVRSummaryType summaryType,
-        vr::VRSkeletalSummaryData_t& outSummary,
+        xr::Input* input,
+        xr::VRActionHandle_t action,
+        xr::EVRSummaryType summaryType,
+        xr::VRSkeletalSummaryData_t& outSummary,
         const char* label)
     {
         outSummary = {};
-        if (!input || action == vr::k_ulInvalidActionHandle)
+        if (!input || action == xr::k_ulInvalidActionHandle)
             return false;
 
-        vr::EVRInputError result = vr::VRInputError_None;
+        xr::EVRInputError result = xr::VRInputError_None;
         bool faulted = false;
         __try
         {
@@ -74,12 +74,12 @@ namespace
             return false;
         }
 
-        return result == vr::VRInputError_None;
+        return result == xr::VRInputError_None;
     }
 
     bool ReadOpenVRSkeletalFingerCurls(
-        vr::IVRInput* input,
-        vr::VRActionHandle_t& action,
+        xr::Input* input,
+        xr::VRActionHandle_t& action,
         const char* actionPath,
         std::array<float, 5>& outCurls,
         const char* label)
@@ -88,28 +88,28 @@ namespace
         if (!input || !actionPath || actionPath[0] == '\0')
             return false;
 
-        if (action == vr::k_ulInvalidActionHandle)
+        if (action == xr::k_ulInvalidActionHandle)
         {
-            if (input->GetActionHandle(actionPath, &action) != vr::VRInputError_None ||
-                action == vr::k_ulInvalidActionHandle)
+            if (input->GetActionHandle(actionPath, &action) != xr::VRInputError_None ||
+                action == xr::k_ulInvalidActionHandle)
             {
                 return false;
             }
         }
 
-        vr::InputSkeletalActionData_t actionData{};
-        if (input->GetSkeletalActionData(action, &actionData, sizeof(actionData)) != vr::VRInputError_None ||
+        xr::InputSkeletalActionData_t actionData{};
+        if (input->GetSkeletalActionData(action, &actionData, sizeof(actionData)) != xr::VRInputError_None ||
             !actionData.bActive ||
-            actionData.activeOrigin == vr::k_ulInvalidInputValueHandle)
+            actionData.activeOrigin == xr::k_ulInvalidInputValueHandle)
         {
             return false;
         }
 
-        vr::VRSkeletalSummaryData_t summary{};
+        xr::VRSkeletalSummaryData_t summary{};
         if (!TryReadOpenVRSkeletalSummary(
                 input,
                 action,
-                vr::VRSummaryType_FromAnimation,
+                xr::VRSummaryType_FromAnimation,
                 summary,
                 label))
         {
@@ -4450,7 +4450,7 @@ bool VR::ReadMagazineInteractionFingerCurls(std::array<float, 5>& outCurls)
         return false;
 
     const bool physicalLeftHand = IsGameplayHandLeftPhysical(true);
-    vr::VRActionHandle_t& action = physicalLeftHand
+    xr::VRActionHandle_t& action = physicalLeftHand
         ? m_NativeViewmodelLeftHandOpenVRAction
         : m_NativeViewmodelRightHandOpenVRAction;
     const char* actionPath = physicalLeftHand
@@ -4517,7 +4517,7 @@ void VR::UpdateNativeViewmodelRightHandOpenVRFingerCurls()
 {
     std::array<float, 5> curls{};
     const bool physicalLeftHand = IsGameplayHandLeftPhysical(false);
-    vr::VRActionHandle_t& action = physicalLeftHand
+    xr::VRActionHandle_t& action = physicalLeftHand
         ? m_NativeViewmodelLeftHandOpenVRAction
         : m_NativeViewmodelRightHandOpenVRAction;
     const char* actionPath = physicalLeftHand

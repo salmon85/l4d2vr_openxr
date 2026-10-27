@@ -630,6 +630,9 @@ void VR::ExitTeleportVisualScout()
         m_CameraAnchor = m_SetupOrigin + Vector(0.0f, 0.0f, 64.0f) - m_HmdPosLocalInWorld;
         m_HeightOffset = m_CameraAnchor.z - m_SetupOrigin.z;
         m_HmdPosAbs = m_CameraAnchor - Vector(0.0f, 0.0f, 64.0f) + m_HmdPosLocalInWorld;
+        const float cameraHeightOffsetUnits = m_CameraHeightOffsetMeters * m_VRScale;
+        if (std::isfinite(cameraHeightOffsetUnits))
+            m_HmdPosAbs.z += cameraHeightOffsetUnits;
         m_HmdPosAbsPrev = m_HmdPosAbs;
         m_SetupOriginToHMD = m_HmdPosAbs - m_SetupOrigin;
     }
@@ -789,7 +792,7 @@ void VR::UpdateTeleportTargeting()
         canCommit = canCommit && playerStateValid && !incapacitated && !hangingFromLedge;
     }
 
-    vr::InputAnalogActionData_t facingTurn{};
+    xr::InputAnalogActionData_t facingTurn{};
     if (GetAnalogActionData(m_ActionTurn, facingTurn))
     {
         if (m_SnapTurning)
@@ -1235,7 +1238,7 @@ void VR::SendFunctionKey(WORD virtualKey)
     SendVirtualKey(virtualKey);
 }
 
-VMatrix VR::VMatrixFromHmdMatrix(const vr::HmdMatrix34_t& hmdMat)
+VMatrix VR::VMatrixFromHmdMatrix(const xr::HmdMatrix34_t& hmdMat)
 {
     // VMatrix has a different implicit coordinate system than HmdMatrix34_t, but this function does not convert between them
     VMatrix vMat(
@@ -1248,9 +1251,9 @@ VMatrix VR::VMatrixFromHmdMatrix(const vr::HmdMatrix34_t& hmdMat)
     return vMat;
 }
 
-vr::HmdMatrix34_t VR::VMatrixToHmdMatrix(const VMatrix& vMat)
+xr::HmdMatrix34_t VR::VMatrixToHmdMatrix(const VMatrix& vMat)
 {
-    vr::HmdMatrix34_t hmdMat = { 0 };
+    xr::HmdMatrix34_t hmdMat = { 0 };
 
     hmdMat.m[0][0] = vMat.m[0][0];
     hmdMat.m[1][0] = vMat.m[0][1];
@@ -1271,37 +1274,37 @@ vr::HmdMatrix34_t VR::VMatrixToHmdMatrix(const VMatrix& vMat)
     return hmdMat;
 }
 
-vr::HmdMatrix34_t VR::GetControllerTipMatrix(vr::ETrackedControllerRole controllerRole)
+xr::HmdMatrix34_t VR::GetControllerTipMatrix(xr::ETrackedControllerRole controllerRole)
 {
-    vr::VRInputValueHandle_t inputValue = vr::k_ulInvalidInputValueHandle;
+    xr::VRInputValueHandle_t inputValue = xr::k_ulInvalidInputValueHandle;
 
-    if (controllerRole == vr::TrackedControllerRole_RightHand)
+    if (controllerRole == xr::TrackedControllerRole_RightHand)
     {
         m_Input->GetInputSourceHandle("/user/hand/right", &inputValue);
     }
-    else if (controllerRole == vr::TrackedControllerRole_LeftHand)
+    else if (controllerRole == xr::TrackedControllerRole_LeftHand)
     {
         m_Input->GetInputSourceHandle("/user/hand/left", &inputValue);
     }
 
-    if (inputValue != vr::k_ulInvalidInputValueHandle)
+    if (inputValue != xr::k_ulInvalidInputValueHandle)
     {
-        char buffer[vr::k_unMaxPropertyStringSize];
+        char buffer[xr::k_unMaxPropertyStringSize];
 
-        m_System->GetStringTrackedDeviceProperty(vr::VRSystem()->GetTrackedDeviceIndexForControllerRole(controllerRole), vr::Prop_RenderModelName_String,
-            buffer, vr::k_unMaxPropertyStringSize);
+        m_System->GetStringTrackedDeviceProperty(xr::VRSystem()->GetTrackedDeviceIndexForControllerRole(controllerRole), xr::Prop_RenderModelName_String,
+            buffer, xr::k_unMaxPropertyStringSize);
 
-        vr::RenderModel_ControllerMode_State_t controllerState = { 0 };
-        vr::RenderModel_ComponentState_t componentState = { 0 };
+        xr::RenderModel_ControllerMode_State_t controllerState = { 0 };
+        xr::RenderModel_ComponentState_t componentState = { 0 };
 
-        if (vr::VRRenderModels()->GetComponentStateForDevicePath(buffer, vr::k_pch_Controller_Component_Tip, inputValue, &controllerState, &componentState))
+        if (xr::VRRenderModels()->GetComponentStateForDevicePath(buffer, xr::k_pch_Controller_Component_Tip, inputValue, &controllerState, &componentState))
         {
             return componentState.mTrackingToComponentLocal;
         }
     }
 
     // Not a hand controller role or tip lookup failed, return identity
-    const vr::HmdMatrix34_t identity =
+    const xr::HmdMatrix34_t identity =
     {
         1.0f, 0.0f, 0.0f, 0.0f,
         0.0f, 1.0f, 0.0f, 0.0f,
@@ -1311,14 +1314,14 @@ vr::HmdMatrix34_t VR::GetControllerTipMatrix(vr::ETrackedControllerRole controll
     return identity;
 }
 
-bool VR::CheckOverlayIntersectionForController(vr::VROverlayHandle_t overlayHandle, vr::ETrackedControllerRole controllerRole)
+bool VR::CheckOverlayIntersectionForController(xr::VROverlayHandle_t overlayHandle, xr::ETrackedControllerRole controllerRole)
 {
-    vr::TrackedDeviceIndex_t deviceIndex = m_System->GetTrackedDeviceIndexForControllerRole(controllerRole);
+    xr::TrackedDeviceIndex_t deviceIndex = m_System->GetTrackedDeviceIndexForControllerRole(controllerRole);
 
-    if (deviceIndex == vr::k_unTrackedDeviceIndexInvalid)
+    if (deviceIndex == xr::k_unTrackedDeviceIndexInvalid)
         return false;
 
-    vr::TrackedDevicePose_t& controllerPose = m_Poses[deviceIndex];
+    xr::TrackedDevicePose_t& controllerPose = m_Poses[deviceIndex];
 
     if (!controllerPose.bPoseIsValid)
         return false;
@@ -1327,10 +1330,10 @@ bool VR::CheckOverlayIntersectionForController(vr::VROverlayHandle_t overlayHand
     VMatrix tipVMatrix = VMatrixFromHmdMatrix(GetControllerTipMatrix(controllerRole));
     tipVMatrix.MatrixMul(controllerVMatrix, controllerVMatrix);
 
-    vr::VROverlayIntersectionParams_t  params = { 0 };
-    vr::VROverlayIntersectionResults_t results = { 0 };
+    xr::VROverlayIntersectionParams_t  params = {};
+    xr::VROverlayIntersectionResults_t results = {};
 
-    params.eOrigin = vr::VRCompositor()->GetTrackingSpace();
+    params.eOrigin = xr::VRCompositor()->GetTrackingSpace();
     params.vSource = { controllerVMatrix.m[3][0],  controllerVMatrix.m[3][1],  controllerVMatrix.m[3][2] };
     params.vDirection = { -controllerVMatrix.m[2][0], -controllerVMatrix.m[2][1], -controllerVMatrix.m[2][2] };
 
