@@ -1242,6 +1242,7 @@ public:
 		Texture_Scope,
 		Texture_RearMirror,
 		Texture_DesktopMirror,
+		Texture_RawOverlay,
 		Texture_Blank
 	};
 
@@ -1586,6 +1587,19 @@ public:
 	xr::VRActionHandle_t m_MenuDown = xr::k_ulInvalidActionHandle;
 	xr::VRActionHandle_t m_MenuLeft = xr::k_ulInvalidActionHandle;
 	xr::VRActionHandle_t m_MenuRight = xr::k_ulInvalidActionHandle;
+
+	// True while the engine is paused or a VGUI cursor is visible. The
+	// CreateMove hook reads this to strip locomotion/action bits from the
+	// player command instead of moving the player behind the pause menu.
+	std::atomic<bool> m_GameMenuInputActive{ false };
+	bool m_PreviousGameMenuInputActive = false;
+	// Edge latches for direct left-stick menu navigation. The helper also
+	// synthesizes MenuUp/Down/Left/Right, but reading the analog axis here
+	// keeps navigation working on runtimes that do not expose those paths.
+	bool m_MenuStickUpPrev = false;
+	bool m_MenuStickDownPrev = false;
+	bool m_MenuStickLeftPrev = false;
+	bool m_MenuStickRightPrev = false;
 	xr::VRActionHandle_t m_Spray = xr::k_ulInvalidActionHandle;
 	xr::VRActionHandle_t m_Scoreboard = xr::k_ulInvalidActionHandle;
 	xr::VRActionHandle_t m_ToggleHUD = xr::k_ulInvalidActionHandle;
@@ -2210,8 +2224,8 @@ public:
 	// Hand HUD alpha (legacy, 0..1): treated as an extra BACKGROUND opacity multiplier.
 	// We intentionally do NOT apply IVROverlay::SetOverlayAlpha to the whole overlay,
 	// because it makes text/bars fade too.
-	float m_LeftWristHudAlpha = 0.5f;
-	float m_RightAmmoHudAlpha = 0.5f;
+	float m_LeftWristHudAlpha = 1.0f;
+	float m_RightAmmoHudAlpha = 1.0f;
 
 	// Left wrist HUD: battery label font scale (1..4) for DrawText5x7.
 	int   m_LeftWristHudBatteryTextScale = 1;
@@ -2223,14 +2237,14 @@ public:
 	// ----------------------------
 	// Hand HUD overlays (SteamVR overlays, raw textures)
 	// ----------------------------
-	bool  m_LeftWristHudEnabled = false;
+	bool  m_LeftWristHudEnabled = true;
 	float m_LeftWristHudWidthMeters = 0.1f;
 	float m_LeftWristHudXOffset = 0.01f;
 	float m_LeftWristHudYOffset = 0.01f;
 	float m_LeftWristHudZOffset = -0.0f;
 	QAngle m_LeftWristHudAngleOffset = { -75.0f, 0.0f, 0.0f };
 
-	bool  m_RightAmmoHudEnabled = false;
+	bool  m_RightAmmoHudEnabled = true;
 	float m_RightAmmoHudWidthMeters = 0.13f; // width reduced by ~2/3 by default
 	float m_RightAmmoHudXOffset = -0.07f;
 	float m_RightAmmoHudYOffset = 0.03f;
@@ -2479,6 +2493,10 @@ public:
 	bool m_MainMenuOneShotVisualCvarsInjected = false;
 	int m_MenuWindowResizeAttempts = 0;
 	ULONGLONG m_LastMenuWindowResizeMs = 0;
+	ULONGLONG m_LastMenuTextureAttemptMs = 0;
+	bool m_MenuWindowShrunk = false;
+	int m_MenuWindowRestoreW = 0;
+	int m_MenuWindowRestoreH = 0;
 
 	// Optional persisted video.txt profile for VR. Applied once when enabled and again after returning to the main menu.
 	bool m_VrRecommendedVideoSettingsEnabled = false;
@@ -3896,6 +3914,7 @@ public:
 	void FinishVrHandsEyeRender();
 	bool RefreshBackBufferTexture(bool forceRefresh = false);
 	void CreateVRTextures();
+	bool EnsureVRMenuTexture();
 	void EnsureOpticsRTTTextures();
 	void LogVAS(const char* tag);
 	void HandleMissingRenderContext(const char* location);
@@ -3918,6 +3937,7 @@ public:
 	void RepositionOverlays();
 	void UpdateHudLiftGestureState(bool inGame);
 	bool IsGameplayHudRequested() const;
+	bool ShouldShowFlatGameplayHud() const;
 	void MarkQueuedHudFresh(uint64_t holdMs = 300);
 	void ClearQueuedHudFresh();
 	bool IsQueuedHudFresh() const;
@@ -3929,6 +3949,8 @@ public:
 	bool UpdatePosesAndActions();
 	void GetViewParameters();
 	void ProcessMenuInput();
+	void ReleaseOwnedCommandsForGameMenu();
+	void ResetMenuNavigationStickState();
 	void ProcessInput();
 	bool UpdateObjectPullInput(C_BasePlayer* localPlayer, bool gripActionDown);
 	void UpdateObjectPullClientTargetMainThread(C_BasePlayer* localPlayer);

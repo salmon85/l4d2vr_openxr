@@ -1,3 +1,5 @@
+namespace xr { void ReleaseHelperRawOverlays(); void PublishOverlayFrame(); }
+
 namespace
 {
     constexpr int kEffectDimLight = 0x4; // Source EF_DIMLIGHT
@@ -1659,8 +1661,10 @@ void VR::Update()
 
     if (!inGameAtUpdateStart)
     {
-        // The boot-time VR swapchain can make the Win32 menu window larger than
-        // the monitor. Shrink it to the monitor work area so the menu is usable.
+        // The boot-time VR swapchain can make the Win32 menu window fill the
+        // whole desktop, which makes the main menu awkward to navigate with a
+        // mouse. Keep a comfortable 720p-class window while in the menu, then
+        // restore the desktop-sized window as soon as a map starts.
         const ULONGLONG nowMs = GetTickCount64();
         if (m_MenuWindowResizeAttempts < 3 &&
             (m_LastMenuWindowResizeMs == 0 || nowMs - m_LastMenuWindowResizeMs > 2000))
@@ -1673,23 +1677,39 @@ void VR::Update()
                 const int clientW = static_cast<int>(client.right - client.left);
                 const int clientH = static_cast<int>(client.bottom - client.top);
 
-                int targetW = 1920;
-                int targetH = 1080;
+                int workW = 1920;
+                int workH = 1080;
                 HMONITOR monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTOPRIMARY);
                 MONITORINFO monitorInfo{};
                 monitorInfo.cbSize = sizeof(monitorInfo);
                 if (GetMonitorInfo(monitor, &monitorInfo))
                 {
-                    targetW = (std::max)(640, static_cast<int>(monitorInfo.rcWork.right - monitorInfo.rcWork.left));
-                    targetH = (std::max)(360, static_cast<int>(monitorInfo.rcWork.bottom - monitorInfo.rcWork.top));
+                    workW = (std::max)(640, static_cast<int>(monitorInfo.rcWork.right - monitorInfo.rcWork.left));
+                    workH = (std::max)(360, static_cast<int>(monitorInfo.rcWork.bottom - monitorInfo.rcWork.top));
                 }
+
+                const int targetW = std::clamp(workW - 64, 960, 1280);
+                const int targetH = std::clamp(workH - 64, 540, 720);
 
                 if (clientW > 0 && clientH > 0 &&
                     (clientW > targetW + 8 || clientH > targetH + 8))
                 {
+                    m_MenuWindowRestoreW = (std::min)(clientW, workW);
+                    m_MenuWindowRestoreH = (std::min)(clientH, workH);
+                    // SetWindowPos alone changes the Win32 client but can leave
+                    // Source's VGUI/render size at the old resolution, which
+                    // crops the right/bottom of the menu. Run the engine's
+                    // video-mode command as well so both sides resize together.
+                    char videoModeCommand[96] = {};
+                    std::snprintf(videoModeCommand, sizeof(videoModeCommand),
+                        "mat_setvideomode %d %d 1", targetW, targetH);
+                    m_Game->ClientCmd_Unrestricted(videoModeCommand);
                     SetWindowPos(hwnd, nullptr, 0, 0, targetW, targetH,
                         SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
-                    Game::logMsg("[VR][MenuWindow] resize %dx%d -> %dx%d", clientW, clientH, targetW, targetH);
+                    Game::logMsg("[VR][MenuWindow] resize %dx%d -> %dx%d (restore %dx%d)",
+                        clientW, clientH, targetW, targetH,
+                        m_MenuWindowRestoreW, m_MenuWindowRestoreH);
+                    m_MenuWindowShrunk = true;
                     m_LastMenuWindowResizeMs = nowMs;
                     ++m_MenuWindowResizeAttempts;
                 }
@@ -1698,6 +1718,23 @@ void VR::Update()
     }
     else
     {
+        if (m_MenuWindowShrunk && m_MenuWindowRestoreW > 0 && m_MenuWindowRestoreH > 0)
+        {
+            HWND hwnd = FindFocusMainWindow();
+            if (hwnd)
+            {
+                char videoModeCommand[96] = {};
+                std::snprintf(videoModeCommand, sizeof(videoModeCommand),
+                    "mat_setvideomode %d %d 1", m_MenuWindowRestoreW, m_MenuWindowRestoreH);
+                m_Game->ClientCmd_Unrestricted(videoModeCommand);
+                SetWindowPos(hwnd, nullptr, 0, 0,
+                    m_MenuWindowRestoreW, m_MenuWindowRestoreH,
+                    SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+                Game::logMsg("[VR][MenuWindow] restore %dx%d after leaving menu",
+                    m_MenuWindowRestoreW, m_MenuWindowRestoreH);
+            }
+            m_MenuWindowShrunk = false;
+        }
         m_MenuWindowResizeAttempts = 0;
         m_LastMenuWindowResizeMs = 0;
     }
@@ -2111,6 +2148,9 @@ void VR::Update()
 
     if (!m_Game->m_VguiSurface)
     {
+        m_GameMenuInputActive.store(false, std::memory_order_release);
+        m_PreviousGameMenuInputActive = false;
+        ResetMenuNavigationStickState();
         PumpSpeechToTextVoiceBroadcast();
         FlushHapticMixer();
         markPresentSpikeUpdatePhase(m_PresentSpikeUpdateInputUs);
@@ -2120,14 +2160,21 @@ void VR::Update()
     const bool menuInputActive =
         (m_Game->m_EngineClient && m_Game->m_EngineClient->IsPaused()) ||
         m_Game->m_VguiSurface->IsCursorVisible();
+    m_GameMenuInputActive.store(menuInputActive, std::memory_order_release);
 
     if (menuInputActive)
     {
+        if (!m_PreviousGameMenuInputActive)
+            ReleaseOwnedCommandsForGameMenu();
         CancelTeleportTargeting();
         ProcessMenuInput();
     }
     else
+    {
+        ResetMenuNavigationStickState();
         ProcessInput();
+    }
+    m_PreviousGameMenuInputActive = menuInputActive;
 
     // UpdateTracking publishes the queued ViewParams snapshot before ProcessInput,
     // while smooth/snap turning modifies m_RotationOffset inside ProcessInput.
@@ -2177,6 +2224,8 @@ void VR::ReleaseVRRenderTargetsForDeviceReset()
     // The VR render targets are created through Source's material system, but DXVK still
     // counts their backing D3D resources as reset-blocking default-pool resources.
     WaitForQueuedCompositorSubmit();
+    if (m_OpenXrHelperBridgeActive)
+        xr::ReleaseHelperRawOverlays();
     std::lock_guard<TextureStateMutex> textureLock(m_TextureMutex);
 
     auto SafeReleaseD3D = [](auto*& ptr)
@@ -2644,6 +2693,111 @@ void VR::CreateVRTextures()
     m_CreatedVRTextures.store(true, std::memory_order_release);
 
     LogVAS("after CreateVRTextures");
+}
+
+bool VR::EnsureVRMenuTexture()
+{
+    // The main menu is not necessarily rendered through RenderView(), so
+    // CreateVRTextures() may not have run before the first menu frame. The
+    // swapchain backbuffer is not KMT-shareable, which left the helper with
+    // no menu texture at all. Create just the shareable menu target on demand.
+    if (!g_D3DVR9 || !m_Game || !m_Game->m_MaterialSystem)
+        return false;
+
+    std::lock_guard<TextureStateMutex> textureLock(m_TextureMutex);
+
+    const bool menuTextureReady =
+        m_MenuTexture != nullptr &&
+        m_D9MenuSurface != nullptr &&
+        m_VKMenu.m_VRTexture.handle != nullptr &&
+        m_VKMenu.m_VulkanData.m_nImage != 0 &&
+        m_VKMenu.m_VulkanData.m_nWidth != 0 &&
+        m_VKMenu.m_VulkanData.m_nHeight != 0 &&
+        m_VKMenu.m_VulkanData.m_nSharedHandleValid != 0 &&
+        m_VKMenu.m_VulkanData.m_nSharedHandle != 0 &&
+        m_VKMenu.m_VulkanData.m_nSharedHandle != 0xFFFFFFFFull;
+    if (menuTextureReady)
+        return true;
+
+    if (m_CreatingTextureID != Texture_None)
+        return false;
+
+    const ULONGLONG nowMs = GetTickCount64();
+    if (m_LastMenuTextureAttemptMs != 0 && nowMs - m_LastMenuTextureAttemptMs < 2000ull)
+        return false;
+    m_LastMenuTextureAttemptMs = nowMs;
+
+    int windowWidth = 0;
+    int windowHeight = 0;
+    HWND gameWindow = FindFocusMainWindow();
+    if (gameWindow)
+    {
+        RECT clientRect{};
+        if (GetClientRect(gameWindow, &clientRect))
+        {
+            windowWidth = static_cast<int>(clientRect.right - clientRect.left);
+            windowHeight = static_cast<int>(clientRect.bottom - clientRect.top);
+        }
+    }
+    if (windowWidth <= 0 || windowHeight <= 0)
+    {
+        CRefPtr<IMatRenderContext> renderContext = m_Game->m_MaterialSystem->GetRenderContext();
+        if (renderContext)
+            renderContext->GetWindowSize(windowWidth, windowHeight);
+    }
+    if (windowWidth <= 0 || windowHeight <= 0)
+    {
+        windowWidth = static_cast<int>((std::max)(1u, m_RenderWidth));
+        windowHeight = static_cast<int>((std::max)(1u, m_RenderHeight));
+    }
+
+    if (m_MenuTexture || m_D9MenuSurface)
+    {
+        if (m_MenuTexture)
+        {
+            m_MenuTexture->Release();
+            m_MenuTexture = nullptr;
+        }
+        if (m_D9MenuSurface)
+        {
+            m_D9MenuSurface->Release();
+            m_D9MenuSurface = nullptr;
+        }
+        std::memset(&m_VKMenu, 0, sizeof(m_VKMenu));
+    }
+
+    Game::logMsg("[VR][MenuOverlay] creating shareable menu target %dx%d", windowWidth, windowHeight);
+
+    m_Game->m_MaterialSystem->isGameRunning = false;
+    m_Game->m_MaterialSystem->BeginRenderTargetAllocation();
+    m_Game->m_MaterialSystem->isGameRunning = true;
+
+    m_CreatingTextureID = Texture_Menu;
+    m_MenuTexture = m_Game->m_MaterialSystem->CreateNamedRenderTargetTextureEx(
+        "vrMenu", windowWidth, windowHeight, RT_SIZE_NO_CHANGE,
+        m_Game->m_MaterialSystem->GetBackBufferFormat(), MATERIAL_RT_DEPTH_NONE, TEXTUREFLAGS_NOMIP);
+    m_CreatingTextureID = Texture_None;
+
+    m_Game->m_MaterialSystem->EndRenderTargetAllocation();
+
+    if (m_MenuTexture && m_D9MenuSurface && m_VKMenu.m_VRTexture.handle &&
+        m_VKMenu.m_VulkanData.m_nSharedHandleValid != 0)
+    {
+        Game::logMsg(
+            "[VR][MenuOverlay] shareable menu target ready tex=%ux%u image=0x%llX shared=0x%llX",
+            m_VKMenu.m_VulkanData.m_nWidth,
+            m_VKMenu.m_VulkanData.m_nHeight,
+            static_cast<unsigned long long>(m_VKMenu.m_VulkanData.m_nImage),
+            static_cast<unsigned long long>(m_VKMenu.m_VulkanData.m_nSharedHandle));
+        return true;
+    }
+
+    Game::logMsg(
+        "[VR][MenuOverlay] shareable menu target unavailable menuTex=%p surface=%p sharedValid=%u",
+        static_cast<void*>(m_MenuTexture),
+        static_cast<void*>(m_D9MenuSurface),
+        m_VKMenu.m_VulkanData.m_nSharedHandleValid);
+    return false;
 }
 
 void VR::EnsureOpticsRTTTextures()
@@ -3624,6 +3778,8 @@ void VR::SubmitVRTextures()
         return;
 
     const bool inGame = (m_Game && m_Game->m_EngineClient && m_Game->m_EngineClient->IsInGame());
+    if (!inGame)
+        EnsureVRMenuTexture();
 
     auto refreshMenuTexture = [&]() -> bool
         {
@@ -3695,6 +3851,7 @@ void VR::SubmitVRTextures()
             (m_VKMenu.m_VRTexture.handle ? &m_VKMenu.m_VRTexture : &m_VKBackBuffer.m_VRTexture),
             false);
         xr::VROverlay()->ShowOverlay(m_MainMenuHandle);
+        xr::PublishOverlayFrame();
         xr::VROverlay()->HideOverlay(m_HUDTopHandle);
         for (xr::VROverlayHandle_t& overlay : m_HUDBottomHandles)
             xr::VROverlay()->HideOverlay(overlay);
@@ -4614,6 +4771,7 @@ void VR::SubmitVRTextures()
             (m_VKMenu.m_VRTexture.handle ? &m_VKMenu.m_VRTexture : &m_VKBackBuffer.m_VRTexture),
             false);
         xr::VROverlay()->ShowOverlay(m_MainMenuHandle);
+        xr::PublishOverlayFrame();
         hideHudOverlays();
         xr::VROverlay()->HideOverlay(m_ScopeHandle);
         xr::VROverlay()->HideOverlay(m_RearMirrorHandle);
@@ -4654,7 +4812,7 @@ void VR::SubmitVRTextures()
     const bool focusedVguiHud =
         (m_Game && m_Game->m_EngineClient && m_Game->m_EngineClient->IsPaused()) ||
         (m_Game && m_Game->m_VguiSurface && m_Game->m_VguiSurface->IsCursorVisible());
-    const bool wantsTopHudOverlay = focusedVguiHud || IsGameplayHudRequested();
+    const bool wantsTopHudOverlay = focusedVguiHud || ShouldShowFlatGameplayHud();
     if (wantsTopHudOverlay)
     {
         applyHudTexture(m_HUDTopHandle, topBounds);
@@ -5305,11 +5463,11 @@ void VR::RepositionOverlays()
     hmdForwardYaw[1] = 0.0f;
     VectorNormalize(hmdForwardYaw);
 
-    Vector menuDistance = hmdForwardYaw * 3;
+    Vector menuDistance = hmdForwardYaw * 1.8f;
     Vector menuNewPos = menuDistance + hmdPosition;
 
     menuTransform.m[0][3] = menuNewPos.x;
-    menuTransform.m[1][3] = menuNewPos.y - 0.25;
+    menuTransform.m[1][3] = menuNewPos.y - 0.08f;
     menuTransform.m[2][3] = menuNewPos.z;
 
     float xScale = menuTransform.m[0][0];
@@ -5321,7 +5479,12 @@ void VR::RepositionOverlays()
     menuTransform.m[2][2] *= cos(hmdRotationDegrees);
 
     xr::VROverlay()->SetOverlayTransformAbsolute(m_MainMenuHandle, trackingOrigin, &menuTransform);
-    xr::VROverlay()->SetOverlayWidthInMeters(m_MainMenuHandle, 1.5 * (1.0 / heightRatio));
+    // The helper renders the menu quad from width+transform directly, so keep
+    // both sides on a fixed modest width instead of magnifying on small
+    // desktop windows (which also made the WiVRn desktop mirror look huge).
+    xr::VROverlay()->SetOverlayWidthInMeters(
+        m_MainMenuHandle,
+        m_OpenXrHelperBridgeActive ? 2.0f : (1.5f * (1.0f / heightRatio)));
 
     auto buildFacingTransform = [&](const Vector& position)
         {

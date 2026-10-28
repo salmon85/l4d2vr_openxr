@@ -98,6 +98,13 @@ namespace
         {
         case L4D2VR_OPENXR_OVERLAY_MAIN_MENU: return "main_menu";
         case L4D2VR_OPENXR_OVERLAY_HUD: return "hud";
+        case L4D2VR_OPENXR_OVERLAY_CONFIG_BACK: return "config_back";
+        case L4D2VR_OPENXR_OVERLAY_CONFIG_FRONT: return "config_front";
+        case L4D2VR_OPENXR_OVERLAY_CONFIG_MENU_BUTTON: return "config_menu_button";
+        case L4D2VR_OPENXR_OVERLAY_CONFIG_MATERIAL: return "config_material";
+        case L4D2VR_OPENXR_OVERLAY_LEFT_WRIST_HUD: return "left_wrist_hud";
+        case L4D2VR_OPENXR_OVERLAY_RIGHT_AMMO_HUD: return "right_ammo_hud";
+        case L4D2VR_OPENXR_OVERLAY_INTENT_HUD: return "intent_hud";
         default: return "unknown";
         }
     }
@@ -1821,6 +1828,82 @@ namespace
         return q;
     }
 
+    XrQuaternionf QuaternionFromOverlayTransform(const float transform[12])
+    {
+        // HmdMatrix34_t is row-major: translation lives at [3], [7], [11],
+        // and the basis columns are (m00,m10,m20), (m01,m11,m21), (m02,m12,m22).
+        float c0[3] = { transform[0], transform[4], transform[8] };
+        float c1[3] = { transform[1], transform[5], transform[9] };
+        float c2[3] = { transform[2], transform[6], transform[10] };
+        const auto normalize3 = [](float v[3])
+        {
+            const float lenSq = v[0] * v[0] + v[1] * v[1] + v[2] * v[2];
+            if (lenSq > 1e-8f)
+            {
+                const float inv = 1.0f / std::sqrt(lenSq);
+                v[0] *= inv; v[1] *= inv; v[2] *= inv;
+            }
+            else
+            {
+                v[0] = 1.0f; v[1] = 0.0f; v[2] = 0.0f;
+            }
+        };
+        normalize3(c0);
+        normalize3(c1);
+        normalize3(c2);
+
+        const float m00 = c0[0], m10 = c0[1], m20 = c0[2];
+        const float m01 = c1[0], m11 = c1[1], m21 = c1[2];
+        const float m02 = c2[0], m12 = c2[1], m22 = c2[2];
+        const float trace = m00 + m11 + m22;
+        float x = 0.0f, y = 0.0f, z = 0.0f, w = 1.0f;
+        if (trace > 0.0f)
+        {
+            const float s = std::sqrt(trace + 1.0f) * 2.0f;
+            w = 0.25f * s;
+            x = (m21 - m12) / s;
+            y = (m02 - m20) / s;
+            z = (m10 - m01) / s;
+        }
+        else if (m00 > m11 && m00 > m22)
+        {
+            const float s = std::sqrt(1.0f + m00 - m11 - m22) * 2.0f;
+            w = (m21 - m12) / s;
+            x = 0.25f * s;
+            y = (m01 + m10) / s;
+            z = (m02 + m20) / s;
+        }
+        else if (m11 > m22)
+        {
+            const float s = std::sqrt(1.0f + m11 - m00 - m22) * 2.0f;
+            w = (m02 - m20) / s;
+            x = (m01 + m10) / s;
+            y = 0.25f * s;
+            z = (m12 + m21) / s;
+        }
+        else
+        {
+            const float s = std::sqrt(1.0f + m22 - m00 - m11) * 2.0f;
+            w = (m10 - m01) / s;
+            x = (m02 + m20) / s;
+            y = (m12 + m21) / s;
+            z = 0.25f * s;
+        }
+        const float lenSq = x * x + y * y + z * z + w * w;
+        if (std::isfinite(lenSq) && lenSq > 1e-8f)
+        {
+            const float inv = 1.0f / std::sqrt(lenSq);
+            x *= inv; y *= inv; z *= inv; w *= inv;
+        }
+        else
+        {
+            return XrQuaternionf{ 0.0f, 0.0f, 0.0f, 1.0f };
+        }
+        if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z) || !std::isfinite(w))
+            return XrQuaternionf{ 0.0f, 0.0f, 0.0f, 1.0f };
+        return XrQuaternionf{ x, y, z, w };
+    }
+
     XrVector3f RotateOpenXrVector(const XrQuaternionf& q, const XrVector3f& v)
     {
         const float tx = 2.0f * (q.y * v.z - q.z * v.y);
@@ -2414,9 +2497,9 @@ namespace
             const char* enabledExtensions[] = { XR_KHR_D3D11_ENABLE_EXTENSION_NAME };
 
             XrInstanceCreateInfo createInfo{ XR_TYPE_INSTANCE_CREATE_INFO };
-            std::snprintf(createInfo.applicationInfo.applicationName, XR_MAX_APPLICATION_NAME_SIZE, "Black Mesa VR");
+            std::snprintf(createInfo.applicationInfo.applicationName, XR_MAX_APPLICATION_NAME_SIZE, "L4D2 VR");
             createInfo.applicationInfo.applicationVersion = 1;
-            std::snprintf(createInfo.applicationInfo.engineName, XR_MAX_ENGINE_NAME_SIZE, "Black Mesa");
+            std::snprintf(createInfo.applicationInfo.engineName, XR_MAX_ENGINE_NAME_SIZE, "Source");
             createInfo.applicationInfo.engineVersion = 1;
             createInfo.applicationInfo.apiVersion = XR_MAKE_VERSION(1, 0, 0);
             createInfo.enabledExtensionCount = ARRAYSIZE(enabledExtensions);
@@ -5895,9 +5978,9 @@ float4 main(float4 position : SV_Position, float2 uv : TEXCOORD0) : SV_Target
             AppendInteractionProfileExtensions(extensions, enabledExtensions, m_Log);
 
             XrInstanceCreateInfo createInfo{ XR_TYPE_INSTANCE_CREATE_INFO };
-            std::snprintf(createInfo.applicationInfo.applicationName, XR_MAX_APPLICATION_NAME_SIZE, "Black Mesa VR");
+            std::snprintf(createInfo.applicationInfo.applicationName, XR_MAX_APPLICATION_NAME_SIZE, "L4D2 VR");
             createInfo.applicationInfo.applicationVersion = 1;
-            std::snprintf(createInfo.applicationInfo.engineName, XR_MAX_ENGINE_NAME_SIZE, "Black Mesa");
+            std::snprintf(createInfo.applicationInfo.engineName, XR_MAX_ENGINE_NAME_SIZE, "Source");
             createInfo.applicationInfo.engineVersion = 1;
             createInfo.applicationInfo.apiVersion = XR_MAKE_VERSION(1, 0, 0);
             createInfo.enabledExtensionCount = static_cast<uint32_t>(enabledExtensions.size());
@@ -8411,6 +8494,23 @@ float4 main(float4 position : SV_Position, float2 uv : TEXCOORD0) : SV_Target
             uint32_t locatedCount,
             const XrPosef* gameRenderCenterPose = nullptr)
         {
+            if (overlay.transformValid != 0)
+            {
+                // Absolute app-space transform from the game. The menu/config
+                // panels are intentionally world-fixed; using the same matrix
+                // here also keeps the laser hit test aligned with the quad.
+                XrPosef pose{};
+                pose.position = XrVector3f{
+                    overlay.transform[3],
+                    overlay.transform[7],
+                    overlay.transform[11]
+                };
+                if (!std::isfinite(pose.position.x) || !std::isfinite(pose.position.y) || !std::isfinite(pose.position.z))
+                    pose.position = XrVector3f{ 0.0f, 0.0f, -2.0f };
+                pose.orientation = QuaternionFromOverlayTransform(overlay.transform);
+                return pose;
+            }
+
             const OverlayAnchor anchor = BuildOverlayAnchor(overlay, locatedViews, locatedCount, gameRenderCenterPose);
             XrPosef pose{ anchor.yawOrientation, anchor.center };
             return pose;
@@ -8424,7 +8524,9 @@ float4 main(float4 position : SV_Position, float2 uv : TEXCOORD0) : SV_Target
             const XrPosef* gameRenderCenterPose = nullptr)
         {
             const XrPosef pose = BuildOverlayPose(overlay, locatedViews, locatedCount, gameRenderCenterPose);
-            if (overlayIndex >= m_OverlaySpatialLocks.size() || !OverlayUsesSpatialLock(overlayIndex))
+            if (overlay.transformValid != 0 ||
+                overlayIndex >= m_OverlaySpatialLocks.size() ||
+                !OverlayUsesSpatialLock(overlayIndex))
                 return pose;
 
             OverlaySpatialLock& lock = m_OverlaySpatialLocks[overlayIndex];
@@ -9472,8 +9574,20 @@ float4 main(float4 position : SV_Position, float2 uv : TEXCOORD0) : SV_Target
                                 overlayLayerPeriodicLogBudget = static_cast<uint32_t>(overlayLayers.size());
                             }
 
-                            for (uint32_t overlayIndex = 0; overlayIndex < L4D2VR_OPENXR_OVERLAY_COUNT; ++overlayIndex)
+                            std::array<uint32_t, L4D2VR_OPENXR_OVERLAY_COUNT> overlayOrder{};
+                            for (uint32_t i = 0; i < L4D2VR_OPENXR_OVERLAY_COUNT; ++i)
+                                overlayOrder[i] = i;
+                            std::stable_sort(
+                                overlayOrder.begin(),
+                                overlayOrder.end(),
+                                [&](uint32_t a, uint32_t b)
+                                {
+                                    return m_Bridge.Overlay(a).sortOrder < m_Bridge.Overlay(b).sortOrder;
+                                });
+
+                            for (uint32_t orderIndex = 0; orderIndex < L4D2VR_OPENXR_OVERLAY_COUNT; ++orderIndex)
                             {
+                                const uint32_t overlayIndex = overlayOrder[orderIndex];
                                 const L4D2VROpenXrOverlayDesc overlay = m_Bridge.Overlay(overlayIndex);
                                 if (!overlay.valid || !overlay.visible || !overlay.texture.valid)
                                 {
@@ -9554,7 +9668,7 @@ float4 main(float4 position : SV_Position, float2 uv : TEXCOORD0) : SV_Target
                                         const uint32_t composedOverlayLayerIndex = overlayLayerCount;
                                         XrCompositionLayerQuad& overlayLayer = overlayLayers[overlayLayerCount++];
                                         overlayLayer.layerFlags =
-                                            (overlayIndex == L4D2VR_OPENXR_OVERLAY_HUD)
+                                            (overlay.reserved1 & L4D2VR_OPENXR_OVERLAY_FLAG_BLEND_ALPHA)
                                                 ? (XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT
                                                     | XR_COMPOSITION_LAYER_UNPREMULTIPLIED_ALPHA_BIT)
                                                 : 0;
@@ -9665,14 +9779,13 @@ float4 main(float4 position : SV_Position, float2 uv : TEXCOORD0) : SV_Target
                             !m_Eyes.empty() &&
                             m_Eyes[0].handle != XR_NULL_HANDLE)
                         {
-                            // Pause-HUD 1.15m × 1.35m plus a 16:9 crop of the
-                            // portrait swapchain left the 0.70 letterbox at
-                            // ~43° and 1.15m (too far vs the old projection).
-                            // Crop to that letterbox and sit it ~arm's length
-                            // at ~78° so it reads like MenuPanelScale=0.70.
-                            constexpr float kMenuQuadDistanceM = 0.65f;
-                            constexpr float kMenuQuadWidthM = 1.05f;
-                            constexpr float kMenuQuadContentScale = 0.70f;
+                            // Pause-HUD / main-menu 2D image: keep it at a
+                            // comfortable monitor-like size instead of the old
+                            // near-field 0.65 m panel that filled the desktop
+                            // mirror and the headset.
+                            constexpr float kMenuQuadDistanceM = 2.00f;
+                            constexpr float kMenuQuadWidthM = 1.25f;
+                            constexpr float kMenuQuadContentScale = 0.80f;
                             L4D2VROpenXrOverlayDesc menu{};
                             menu.distanceMeters = kMenuQuadDistanceM;
                             menu.widthMeters = kMenuQuadWidthM;
@@ -9759,7 +9872,30 @@ float4 main(float4 position : SV_Position, float2 uv : TEXCOORD0) : SV_Target
                     }
                 }
                 if (submitProjectionLayer)
+                {
+                    // Wine's openxr layer conversion picks the element size for
+                    // every layer from layers[0]. Projection is 48 bytes and a
+                    // quad is 112, so [projection, quad, ...] overflows and the
+                    // runtime rejects the frame with XR_ERROR_POSE_INVALID.
+                    // Put a tiny invisible quad first so all slots use the
+                    // larger quad size, then submit projection and real quads.
+                    if (overlayLayerCount > 0)
+                    {
+                        XrCompositionLayerQuad dummy = overlayLayers[0];
+                        dummy.layerFlags = 0;
+                        dummy.eyeVisibility = XR_EYE_VISIBILITY_LEFT;
+                        dummy.pose.position = XrVector3f{ 0.0f, -100.0f, 0.0f };
+                        dummy.pose.orientation = XrQuaternionf{ 0.0f, 0.0f, 0.0f, 1.0f };
+                        dummy.size = XrExtent2Df{ 0.001f, 0.001f };
+                        layers[layerCount++] = reinterpret_cast<const XrCompositionLayerBaseHeader*>(&dummy);
+                        // The dummy is a local; copy it into a stable array slot.
+                        // (layers[] stores pointers, so keep the storage alive.)
+                        static thread_local XrCompositionLayerQuad s_dummyQuad;
+                        s_dummyQuad = dummy;
+                        layers[layerCount - 1] = reinterpret_cast<const XrCompositionLayerBaseHeader*>(&s_dummyQuad);
+                    }
                     layers[layerCount++] = reinterpret_cast<const XrCompositionLayerBaseHeader*>(&layer);
+                }
                 for (uint32_t overlayLayerIndex = 0; overlayLayerIndex < overlayLayerCount; ++overlayLayerIndex)
                     layers[layerCount++] = reinterpret_cast<const XrCompositionLayerBaseHeader*>(&overlayLayers[overlayLayerIndex]);
                 XrFrameEndInfo endInfo{ XR_TYPE_FRAME_END_INFO };
@@ -9808,6 +9944,35 @@ float4 main(float4 position : SV_Position, float2 uv : TEXCOORD0) : SV_Target
                     }
                 }
                 result = m_Xr.xrEndFrame(m_Session, &endInfo);
+                if (result == XR_ERROR_POSE_INVALID && layerCount > 0)
+                {
+                    // A single bad quad pose must not kill the whole VR stream.
+                    // Retry projection-only, then with no layers, so the game
+                    // remains visible and the next frame can recover.
+                    XrFrameEndInfo retryInfo = endInfo;
+                    std::array<const XrCompositionLayerBaseHeader*, 1> projectionOnly{};
+                    uint32_t retryLayerCount = 0;
+                    if (submitProjectionLayer)
+                        projectionOnly[retryLayerCount++] =
+                            reinterpret_cast<const XrCompositionLayerBaseHeader*>(&layer);
+                    retryInfo.layerCount = retryLayerCount;
+                    retryInfo.layers = retryLayerCount ? projectionOnly.data() : nullptr;
+                    result = m_Xr.xrEndFrame(m_Session, &retryInfo);
+                    if (result == XR_ERROR_POSE_INVALID && retryLayerCount > 0)
+                    {
+                        retryInfo.layerCount = 0;
+                        retryInfo.layers = nullptr;
+                        result = m_Xr.xrEndFrame(m_Session, &retryInfo);
+                    }
+                    if (Succeeded(m_Log, "xrEndFrame(pose fallback)", result))
+                    {
+                        m_Log.Print(
+                            "[OpenXR][EndFrameSubmit] recovered from XR_ERROR_POSE_INVALID; dropped overlay layers (originalLayers=%u projection=%u retryLayers=%u)",
+                            layerCount,
+                            submitProjectionLayer ? 1u : 0u,
+                            retryLayerCount);
+                    }
+                }
                 if (!Succeeded(m_Log, "xrEndFrame", result))
                     return 26;
                 ++compositorFrames;

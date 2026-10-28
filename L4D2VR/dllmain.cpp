@@ -2929,6 +2929,11 @@ namespace
         { "2026-05-23_auto_mat_queue_mode_default_false", "AutoMatQueueMode", "false" },
         { "2026-06-12_vr_recommended_video_settings_default_false", "VrRecommendedVideoSettingsEnabled", "false" },
         { "2026-08-12_vr_hands_gloves_disable_once", "VrHandsGlovesEnabled", "false" },
+        { "2026-10-28_disable_manual_reload_once", "MagazineInteractionEnabled", "false" },
+        { "2026-10-28_enable_hand_hud_once", "LeftWristHudEnabled", "true" },
+        { "2026-10-28_enable_ammo_hud_once", "RightAmmoHudEnabled", "true" },
+        { "2026-10-28_hand_hud_alpha_once", "LeftWristHudAlpha", "1.0" },
+        { "2026-10-28_ammo_hud_alpha_once", "RightAmmoHudAlpha", "1.0" },
     };
 
     std::unordered_set<std::string> ReadAppliedConfigMigrationIds(const std::filesystem::path& statePath)

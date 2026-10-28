@@ -252,6 +252,26 @@ bool __fastcall Hooks::dCreateMove(void* ecx, void* edx, float flInputSampleTime
 		constexpr int kIN_JUMP = (1 << 1);
 		const bool inputJumpHeld = (cmd->buttons & kIN_JUMP) != 0;
 
+		// While the pause/main menu or any focused VGUI panel is open, the
+		// engine still runs CreateMove. Strip locomotion and action bits so
+		// the player cannot walk (or fire) behind the menu. Menu navigation
+		// itself is delivered through VGUI input in ProcessMenuInput().
+		if (m_VR->m_GameMenuInputActive.load(std::memory_order_acquire))
+		{
+			cmd->forwardmove = 0.0f;
+			cmd->sidemove = 0.0f;
+			cmd->upmove = 0.0f;
+			cmd->buttons = 0;
+			cmd->impulse = 0;
+			cmd->weaponselect = 0;
+			cmd->weaponsubtype = 0;
+			cmd->mousedx = 0;
+			cmd->mousedy = 0;
+			m_VR->m_PushingThumbstick = false;
+			m_VR->m_LocomotionActive = false;
+			return true;
+		}
+
 		m_VR->ApplyOptionalCreateMoveFeatures(cmd, 0, inputJumpHeld, false, 0.0f, 0.0f, false);
 
 		bool effectiveRangeAutoFireEligible = false;

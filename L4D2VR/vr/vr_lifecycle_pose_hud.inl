@@ -750,16 +750,19 @@ void VR::ProcessMenuInput()
         std::find(m_HUDBottomHandles.begin(), m_HUDBottomHandles.end(), currentOverlay) != m_HUDBottomHandles.end());
 
     // Overlays can't process action inputs if the laser is active, so
-    // only activate laser if a controller is pointing at the overlay
+    // only activate laser if a controller is pointing at the overlay.
+    xr::VROverlay()->SetOverlayFlag(
+        currentOverlay,
+        xr::VROverlayFlags_MakeOverlaysInteractiveIfVisible,
+        isHoveringOverlay);
+
     if (isHoveringOverlay)
     {
-        xr::VROverlay()->SetOverlayFlag(currentOverlay, xr::VROverlayFlags_MakeOverlaysInteractiveIfVisible, true);
-
         xr::VREvent_t vrEvent;
         while (xr::VROverlay()->PollNextOverlayEvent(currentOverlay, &vrEvent, sizeof(vrEvent)))
         {
             int button = vrEvent.data.controller.button;
-            
+
             switch (vrEvent.eventType)
             {
             case xr::VREvent_MouseMove:
@@ -816,47 +819,111 @@ void VR::ProcessMenuInput()
             }
         }
     }
-    else
-    {
-        xr::VROverlay()->SetOverlayFlag(currentOverlay, xr::VROverlayFlags_MakeOverlaysInteractiveIfVisible, false);
 
-        if (PressedDigitalAction(m_MenuSelect, true))
+    // Menu navigation must remain available while a controller is pointing at
+    // the panel (the laser only adds mouse input). Source's menu expects
+    // keyboard navigation, so translate the digital dpad actions and the raw
+    // left-stick axes into arrow keys every frame the menu is open.
+    auto sendMenuKey = [&](ButtonCode_t key)
         {
-            m_Game->m_VguiInput->InternalKeyCodeTyped(ButtonCode_t::KEY_SPACE);
-            m_Game->m_VguiInput->InternalKeyCodePressed(ButtonCode_t::KEY_SPACE);
-            m_Game->m_VguiInput->InternalKeyCodeReleased(ButtonCode_t::KEY_SPACE);
+            m_Game->m_VguiInput->InternalKeyCodeTyped(key);
+            m_Game->m_VguiInput->InternalKeyCodePressed(key);
+            m_Game->m_VguiInput->InternalKeyCodeReleased(key);
+        };
+
+    if (!isHoveringOverlay && PressedDigitalAction(m_MenuSelect, true))
+        sendMenuKey(ButtonCode_t::KEY_SPACE);
+    if (PressedDigitalAction(m_MenuBack, true) || PressedDigitalAction(m_Pause, true))
+        sendMenuKey(ButtonCode_t::KEY_ESCAPE);
+
+    bool stickUp = false;
+    bool stickDown = false;
+    bool stickLeft = false;
+    bool stickRight = false;
+    {
+        xr::InputAnalogActionData_t menuStick{};
+        if (GetAnalogActionData(m_ActionWalk, menuStick))
+        {
+            constexpr float kMenuStickPress = 0.62f;
+            constexpr float kMenuStickRelease = 0.42f;
+            auto edge = [&](float value, bool& previous)
+                {
+                    const bool down = previous
+                        ? (value > kMenuStickRelease)
+                        : (value > kMenuStickPress);
+                    const bool pressed = down && !previous;
+                    previous = down;
+                    return pressed;
+                };
+            stickUp = edge(menuStick.y, m_MenuStickUpPrev);
+            stickDown = edge(-menuStick.y, m_MenuStickDownPrev);
+            stickRight = edge(menuStick.x, m_MenuStickRightPrev);
+            stickLeft = edge(-menuStick.x, m_MenuStickLeftPrev);
         }
-        if (PressedDigitalAction(m_MenuBack, true) || PressedDigitalAction(m_Pause, true))
+        else
         {
-            m_Game->m_VguiInput->InternalKeyCodeTyped(ButtonCode_t::KEY_ESCAPE);
-            m_Game->m_VguiInput->InternalKeyCodePressed(ButtonCode_t::KEY_ESCAPE);
-            m_Game->m_VguiInput->InternalKeyCodeReleased(ButtonCode_t::KEY_ESCAPE);
-        }
-        if (PressedDigitalAction(m_MenuUp, true))
-        {
-            m_Game->m_VguiInput->InternalKeyCodeTyped(ButtonCode_t::KEY_UP);
-            m_Game->m_VguiInput->InternalKeyCodePressed(ButtonCode_t::KEY_UP);
-            m_Game->m_VguiInput->InternalKeyCodeReleased(ButtonCode_t::KEY_UP);
-        }
-        if (PressedDigitalAction(m_MenuDown, true))
-        {
-            m_Game->m_VguiInput->InternalKeyCodeTyped(ButtonCode_t::KEY_DOWN);
-            m_Game->m_VguiInput->InternalKeyCodePressed(ButtonCode_t::KEY_DOWN);
-            m_Game->m_VguiInput->InternalKeyCodeReleased(ButtonCode_t::KEY_DOWN);
-        }
-        if (PressedDigitalAction(m_MenuLeft, true))
-        {
-            m_Game->m_VguiInput->InternalKeyCodeTyped(ButtonCode_t::KEY_LEFT);
-            m_Game->m_VguiInput->InternalKeyCodePressed(ButtonCode_t::KEY_LEFT);
-            m_Game->m_VguiInput->InternalKeyCodeReleased(ButtonCode_t::KEY_LEFT);
-        }
-        if (PressedDigitalAction(m_MenuRight, true))
-        {
-            m_Game->m_VguiInput->InternalKeyCodeTyped(ButtonCode_t::KEY_RIGHT);
-            m_Game->m_VguiInput->InternalKeyCodePressed(ButtonCode_t::KEY_RIGHT);
-            m_Game->m_VguiInput->InternalKeyCodeReleased(ButtonCode_t::KEY_RIGHT);
+            ResetMenuNavigationStickState();
         }
     }
+
+    if (stickUp || PressedDigitalAction(m_MenuUp, true))
+        sendMenuKey(ButtonCode_t::KEY_UP);
+    if (stickDown || PressedDigitalAction(m_MenuDown, true))
+        sendMenuKey(ButtonCode_t::KEY_DOWN);
+    if (stickLeft || PressedDigitalAction(m_MenuLeft, true))
+        sendMenuKey(ButtonCode_t::KEY_LEFT);
+    if (stickRight || PressedDigitalAction(m_MenuRight, true))
+        sendMenuKey(ButtonCode_t::KEY_RIGHT);
+}
+
+void VR::ResetMenuNavigationStickState()
+{
+    m_MenuStickUpPrev = false;
+    m_MenuStickDownPrev = false;
+    m_MenuStickLeftPrev = false;
+    m_MenuStickRightPrev = false;
+}
+
+void VR::ReleaseOwnedCommandsForGameMenu()
+{
+    if (!m_Game)
+        return;
+
+    if (m_PrimaryAttackCmdOwned)
+    {
+        m_Game->ClientCmd_Unrestricted("-attack");
+        m_PrimaryAttackCmdOwned = false;
+    }
+    if (m_SecondaryAttackCmdOwned)
+    {
+        m_Game->ClientCmd_Unrestricted("-attack2");
+        m_SecondaryAttackCmdOwned = false;
+    }
+    if (m_JumpCmdOwned)
+    {
+        m_Game->ClientCmd_Unrestricted("-jump");
+        m_JumpCmdOwned = false;
+    }
+    if (m_UseCmdOwned)
+    {
+        m_Game->ClientCmd_Unrestricted("-use");
+        m_UseCmdOwned = false;
+    }
+    if (m_ReloadCmdOwned)
+    {
+        m_Game->ClientCmd_Unrestricted("-reload");
+        m_ReloadCmdOwned = false;
+    }
+    if (m_DuckCmdOwned)
+    {
+        m_Game->ClientCmd_Unrestricted("-duck");
+        m_DuckCmdOwned = false;
+    }
+    m_ServerUseControllerAimActive = false;
+    m_ServerUseControllerAimUntil = {};
+    m_PrimaryAttackDown = false;
+    m_PushingThumbstick = false;
+    m_LocomotionActive = false;
 }
 
 
@@ -982,6 +1049,9 @@ void VR::UpdateHandHudOverlays(PendingOverlayTextureBindBatch* pendingTextureBin
             // dxvk D3D9 is not generally thread-safe: lock the device while we create/describe resources.
             g_D3DVR9->LockDevice();
 
+            const bool setRawOverlayTextureId = (m_CreatingTextureID == Texture_None);
+            if (setRawOverlayTextureId)
+                m_CreatingTextureID = Texture_RawOverlay;
             HRESULT hr = dev->CreateTexture(
                 (UINT)wantW,
                 (UINT)wantH,
@@ -991,6 +1061,8 @@ void VR::UpdateHandHudOverlays(PendingOverlayTextureBindBatch* pendingTextureBin
                 D3DPOOL_DEFAULT,
                 &tex,
                 nullptr);
+            if (setRawOverlayTextureId)
+                m_CreatingTextureID = Texture_None;
 
             if (SUCCEEDED(hr) && tex)
             {
@@ -998,7 +1070,9 @@ void VR::UpdateHandHudOverlays(PendingOverlayTextureBindBatch* pendingTextureBin
                 if (surf)
                 {
                     D3D9_TEXTURE_VR_DESC desc{};
-                    if (SUCCEEDED(g_D3DVR9->GetVRDesc(surf, &desc)))
+                    const HRESULT vrDescHr = g_D3DVR9->GetVRDesc(surf, &desc);
+                    if (SUCCEEDED(vrDescHr) &&
+                        (!m_OpenXrHelperBridgeActive || desc.SharedHandleValid != 0))
                     {
                         std::memcpy(&vk.m_VulkanData, &desc, sizeof(xr::VRVulkanTextureData_t));
                         vk.m_VRTexture.handle = &vk.m_VulkanData;
@@ -1112,6 +1186,9 @@ void VR::UpdateHandHudOverlays(PendingOverlayTextureBindBatch* pendingTextureBin
                 return false;
 
             g_D3DVR9->LockDevice();
+            const bool setRawOverlayTextureId = (m_CreatingTextureID == Texture_None);
+            if (setRawOverlayTextureId)
+                m_CreatingTextureID = Texture_RawOverlay;
             HRESULT hr = dev->CreateTexture(
                 (UINT)wantW,
                 (UINT)wantH,
@@ -1121,6 +1198,8 @@ void VR::UpdateHandHudOverlays(PendingOverlayTextureBindBatch* pendingTextureBin
                 D3DPOOL_DEFAULT,
                 &tex,
                 nullptr);
+            if (setRawOverlayTextureId)
+                m_CreatingTextureID = Texture_None;
 
             if (SUCCEEDED(hr) && tex)
             {
@@ -1128,7 +1207,9 @@ void VR::UpdateHandHudOverlays(PendingOverlayTextureBindBatch* pendingTextureBin
                 if (surf)
                 {
                     D3D9_TEXTURE_VR_DESC desc{};
-                    if (SUCCEEDED(g_D3DVR9->GetVRDesc(surf, &desc)))
+                    const HRESULT vrDescHr = g_D3DVR9->GetVRDesc(surf, &desc);
+                    if (SUCCEEDED(vrDescHr) &&
+                        (!m_OpenXrHelperBridgeActive || desc.SharedHandleValid != 0))
                     {
                         std::memcpy(&vk.m_VulkanData, &desc, sizeof(xr::VRVulkanTextureData_t));
                         vk.m_VRTexture.handle = &vk.m_VulkanData;

@@ -5,7 +5,7 @@
 #include <cstring>
 
 constexpr uint32_t L4D2VR_OPENXR_BRIDGE_MAGIC = 0x5258344Cu; // L4XR
-constexpr uint32_t L4D2VR_OPENXR_BRIDGE_VERSION = 14;
+constexpr uint32_t L4D2VR_OPENXR_BRIDGE_VERSION = 15;
 // 13: XR_KHR_visibility_mask hidden triangle list (NDC xy per eye).
 // 14: helperConsumingFrameId / helperConsumedFrameId (helper -> game blit
 //     progress; the game reuses a publish slot only once the helper's blit
@@ -44,9 +44,21 @@ enum : uint32_t
 {
     L4D2VR_OPENXR_OVERLAY_MAIN_MENU = 0,
     L4D2VR_OPENXR_OVERLAY_HUD = 1,
-    L4D2VR_OPENXR_OVERLAY_COUNT = 2,
+    L4D2VR_OPENXR_OVERLAY_CONFIG_BACK = 2,
+    L4D2VR_OPENXR_OVERLAY_CONFIG_FRONT = 3,
+    L4D2VR_OPENXR_OVERLAY_CONFIG_MENU_BUTTON = 4,
+    L4D2VR_OPENXR_OVERLAY_CONFIG_MATERIAL = 5,
+    L4D2VR_OPENXR_OVERLAY_LEFT_WRIST_HUD = 6,
+    L4D2VR_OPENXR_OVERLAY_RIGHT_AMMO_HUD = 7,
+    L4D2VR_OPENXR_OVERLAY_INTENT_HUD = 8,
+    L4D2VR_OPENXR_OVERLAY_COUNT = 9,
     L4D2VR_OPENXR_OVERLAY_MAIN_MENU_READY = 1u << L4D2VR_OPENXR_OVERLAY_MAIN_MENU,
-    L4D2VR_OPENXR_OVERLAY_HUD_READY = 1u << L4D2VR_OPENXR_OVERLAY_HUD
+    L4D2VR_OPENXR_OVERLAY_HUD_READY = 1u << L4D2VR_OPENXR_OVERLAY_HUD,
+    L4D2VR_OPENXR_OVERLAY_CONFIG_READY =
+        (1u << L4D2VR_OPENXR_OVERLAY_CONFIG_BACK) |
+        (1u << L4D2VR_OPENXR_OVERLAY_CONFIG_FRONT) |
+        (1u << L4D2VR_OPENXR_OVERLAY_CONFIG_MENU_BUTTON) |
+        (1u << L4D2VR_OPENXR_OVERLAY_CONFIG_MATERIAL)
 };
 
 enum : uint32_t
@@ -246,6 +258,16 @@ struct L4D2VROpenXrOverlayDesc
     float curvature = 0.0f;
     float offsetMeters[3] = { 0.0f, -0.25f, 0.0f };
     float orientation[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
+    // Optional absolute app-space transform (row-major 3x4, same layout as
+    // OpenVR's HmdMatrix34). When valid, the helper uses this instead of the
+    // HMD-relative distance/offset placement. Input ray intersections already
+    // use the same transform, so the visible panel and laser stay aligned.
+    uint32_t transformValid = 0;
+    float transform[12] = {};
+    // OpenVR overlay sort order. Lower values are composed first. The config
+    // panel uses two alternating textures and changes their sort order, so the
+    // helper must honor this instead of relying on fixed slot order.
+    uint32_t sortOrder = 0;
 };
 
 // reserved1 bits on L4D2VROpenXrPoseDesc. reserved0 is still the packed IPD

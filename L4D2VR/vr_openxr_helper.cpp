@@ -281,6 +281,12 @@ struct OverlayState {
     bool scrollUpPrev = false;
     bool scrollDownPrev = false;
     bool facePressedPrev = false;
+    // CPU-uploaded raw overlays (config panel/menu button). Backed by a
+    // D3D9 texture that DXVK exports as a KMT shared image for the helper.
+    IDirect3DTexture9* rawTexture = nullptr;
+    IDirect3DSurface9* rawSurface = nullptr;
+    uint32_t rawWidth = 0;
+    uint32_t rawHeight = 0;
     std::vector<xr::VREvent_t> events;
 };
 
@@ -296,15 +302,49 @@ struct PoseSnapshot {
     bool secondary[2] = { false, false };
 };
 
-// Publish the game's menu/HUD overlays into the helper bridge.  Only these
-// two slots exist in the x64 helper; other OpenVR overlays (scope, wrist HUD,
-// config panel) stay game-side until the helper grows matching slots.
+// Publish the game's menu/HUD/config overlays into the helper bridge.
+static void MultiplyOverlayTransform34(
+    const xr::HmdMatrix34_t& a,
+    const xr::HmdMatrix34_t& b,
+    xr::HmdMatrix34_t& out)
+{
+    for (int r = 0; r < 3; ++r)
+    {
+        for (int c = 0; c < 3; ++c)
+        {
+            out.m[r][c] =
+                a.m[r][0] * b.m[0][c] +
+                a.m[r][1] * b.m[1][c] +
+                a.m[r][2] * b.m[2][c];
+        }
+        out.m[r][3] =
+            a.m[r][0] * b.m[0][3] +
+            a.m[r][1] * b.m[1][3] +
+            a.m[r][2] * b.m[2][3] +
+            a.m[r][3];
+    }
+}
+
 void PublishOverlayToBridge(const OverlayState& overlay) {
     int overlayIndex = -1;
     if (overlay.key == "MenuOverlayKey") {
         overlayIndex = L4D2VR_OPENXR_OVERLAY_MAIN_MENU;
     } else if (overlay.key == "HUDOverlayTopKey") {
         overlayIndex = L4D2VR_OPENXR_OVERLAY_HUD;
+    } else if (overlay.key == "l4d2vr.config.overlay.back") {
+        overlayIndex = L4D2VR_OPENXR_OVERLAY_CONFIG_BACK;
+    } else if (overlay.key == "l4d2vr.config.overlay.front") {
+        overlayIndex = L4D2VR_OPENXR_OVERLAY_CONFIG_FRONT;
+    } else if (overlay.key == "l4d2vr.config.menu_button") {
+        overlayIndex = L4D2VR_OPENXR_OVERLAY_CONFIG_MENU_BUTTON;
+    } else if (overlay.key == "l4d2vr.character_materials.overlay") {
+        overlayIndex = L4D2VR_OPENXR_OVERLAY_CONFIG_MATERIAL;
+    } else if (overlay.key == "LeftWristHudOverlayKey") {
+        overlayIndex = L4D2VR_OPENXR_OVERLAY_LEFT_WRIST_HUD;
+    } else if (overlay.key == "RightAmmoHudOverlayKey") {
+        overlayIndex = L4D2VR_OPENXR_OVERLAY_RIGHT_AMMO_HUD;
+    } else if (overlay.key == "SpecialInfectedIntentSenseHudOverlayKey") {
+        overlayIndex = L4D2VR_OPENXR_OVERLAY_INTENT_HUD;
     } else {
         return;
     }
@@ -342,17 +382,43 @@ void PublishOverlayToBridge(const OverlayState& overlay) {
     const float textureAspect =
         (data.m_nWidth != 0) ? (static_cast<float>(data.m_nHeight) / static_cast<float>(data.m_nWidth)) : 0.5625f;
 
+    // The game-side overlay transform already carries the exact placement used
+    // for mouse/laser hit testing. Tracked-device-relative hand HUD overlays are
+    // converted to an absolute app-space matrix here so the helper does not
+    // need its own controller-pose cache.
+    bool haveAbsoluteTransform = false;
+    xr::HmdMatrix34_t absoluteTransform{};
+    if (overlay.transformType == xr::VROverlayTransform_Absolute) {
+        absoluteTransform = overlay.transform;
+        haveAbsoluteTransform = true;
+    } else if (overlay.transformType == xr::VROverlayTransform_TrackedDeviceRelative &&
+               g_Game && g_Game->m_VR) {
+        const xr::TrackedDeviceIndex_t device = overlay.transformDevice;
+        if (device < xr::k_unMaxTrackedDeviceCount &&
+            g_Game->m_VR->m_Poses[device].bPoseIsValid) {
+            MultiplyOverlayTransform34(
+                g_Game->m_VR->m_Poses[device].mDeviceToAbsoluteTracking,
+                overlay.transform,
+                absoluteTransform);
+            haveAbsoluteTransform = true;
+        }
+    }
+    if (haveAbsoluteTransform) {
+        desc.transformValid = 1;
+        std::memcpy(desc.transform, absoluteTransform.m, sizeof(desc.transform));
+    }
+
     if (overlayIndex == L4D2VR_OPENXR_OVERLAY_MAIN_MENU) {
-        // The game's menu transform widens the overlay to cancel the eye-sized
-        // backbuffer; the helper quad is already HMD-relative, so use a fixed
-        // readable size instead.
-        desc.widthMeters = std::clamp(overlay.widthMeters, 0.8f, 1.8f);
-        desc.distanceMeters = 3.0f;
+        // Use the game's placement (world-fixed in front of the player). The
+        // transform's x/y scale cancels the eye-sized backbuffer; the helper
+        // only needs its rotation/translation and the texture bounds.
+        desc.widthMeters = std::clamp(overlay.widthMeters, 0.8f, 2.2f);
+        desc.distanceMeters = 1.8f;
         desc.offsetMeters[0] = 0.0f;
-        desc.offsetMeters[1] = -0.25f;
+        desc.offsetMeters[1] = -0.08f;
         desc.offsetMeters[2] = 0.0f;
         desc.reserved1 = 0;
-    } else {
+    } else if (overlayIndex == L4D2VR_OPENXR_OVERLAY_HUD) {
         // Keep the HUD layer available for the whole gameplay session. Source
         // toggles the top HUD overlay on and off around pause/scoreboard/VGUI
         // transitions; without this the helper drops the layer every other
@@ -370,13 +436,24 @@ void PublishOverlayToBridge(const OverlayState& overlay) {
         desc.offsetMeters[1] = -0.12f;
         desc.offsetMeters[2] = 0.0f;
         desc.reserved1 = L4D2VR_OPENXR_OVERLAY_FLAG_BLEND_ALPHA;
-
+        desc.transformValid = 0;
+    } else {
+        // Config panel / config menu button. The game owns the world-fixed
+        // transform and size; keep the alpha blend used by the GDI panels.
+        const float requestedWidth = std::isfinite(overlay.widthMeters) ? overlay.widthMeters : 2.05f;
+        desc.widthMeters = std::clamp(requestedWidth, 0.10f, 3.0f);
+        desc.distanceMeters = 1.35f;
+        desc.offsetMeters[0] = 0.0f;
+        desc.offsetMeters[1] = -0.05f;
+        desc.offsetMeters[2] = 0.0f;
+        desc.reserved1 = L4D2VR_OPENXR_OVERLAY_FLAG_BLEND_ALPHA;
     }
     desc.heightMeters = desc.widthMeters * textureAspect;
     desc.orientation[0] = 0.0f;
     desc.orientation[1] = 0.0f;
     desc.orientation[2] = 0.0f;
     desc.orientation[3] = 1.0f;
+    desc.sortOrder = overlay.sortOrder;
 
     L4D2VR_PublishOpenXrOverlay(static_cast<uint32_t>(overlayIndex), desc);
 
@@ -453,6 +530,8 @@ public:
     xr::EVROverlayError DestroyOverlay(xr::VROverlayHandle_t handle);
     xr::EVROverlayError FindOverlay(const char* key, xr::VROverlayHandle_t* handle);
     xr::EVROverlayError SetOverlayRaw(xr::VROverlayHandle_t handle, void* buffer, uint32_t width, uint32_t height, uint32_t depth);
+    void ReleaseRawOverlayTextures();
+    void PublishOverlayFrameOnly();
     xr::EVROverlayError SetOverlaySortOrder(xr::VROverlayHandle_t handle, uint32_t sortOrder);
     xr::EVROverlayError SetOverlayTexture(xr::VROverlayHandle_t handle, const xr::Texture_t* texture);
     xr::EVROverlayError SetOverlayTextureBounds(xr::VROverlayHandle_t handle, const xr::VRTextureBounds_t* bounds);
@@ -516,6 +595,7 @@ private:
 
     std::mutex m_overlayMutex;
     std::vector<OverlayState> m_overlays;
+    std::vector<std::pair<IDirect3DTexture9*, IDirect3DSurface9*>> m_retiredRawTextures;
     std::atomic<uint64_t> m_nextOverlayHandle{ 1 };
 };
 
@@ -610,6 +690,25 @@ bool HelperBackend::Initialize() {
 void HelperBackend::Shutdown() {
     // The helper watches the game process and exits with it.  Nothing owns
     // OpenXR state in this process.
+    {
+        std::lock_guard<std::mutex> lock(m_overlayMutex);
+        for (OverlayState& overlay : m_overlays) {
+            if (overlay.rawSurface)
+                overlay.rawSurface->Release();
+            if (overlay.rawTexture)
+                overlay.rawTexture->Release();
+            overlay.rawSurface = nullptr;
+            overlay.rawTexture = nullptr;
+        }
+        for (auto& retired : m_retiredRawTextures) {
+            if (retired.second)
+                retired.second->Release();
+            if (retired.first)
+                retired.first->Release();
+        }
+        m_retiredRawTextures.clear();
+        m_overlays.clear();
+    }
     m_initialized = false;
 }
 
@@ -1196,6 +1295,10 @@ xr::EVROverlayError HelperBackend::DestroyOverlay(xr::VROverlayHandle_t handle) 
     std::lock_guard<std::mutex> lock(m_overlayMutex);
     for (auto it = m_overlays.begin(); it != m_overlays.end(); ++it) {
         if (it->handle == handle) {
+            if (it->rawTexture || it->rawSurface) {
+                // A submitted frame may still reference this descriptor.
+                m_retiredRawTextures.emplace_back(it->rawTexture, it->rawSurface);
+            }
             m_overlays.erase(it);
             return xr::VROverlayError_None;
         }
@@ -1218,10 +1321,186 @@ xr::EVROverlayError HelperBackend::FindOverlay(const char* key, xr::VROverlayHan
 }
 
 xr::EVROverlayError HelperBackend::SetOverlayRaw(xr::VROverlayHandle_t handle, void* buffer, uint32_t width, uint32_t height, uint32_t depth) {
-    // CPU overlay raw textures are not used by the helper path yet.  Keep the
-    // call successful so the mod's fallback HUD upload path does not spam.
-    (void)handle; (void)buffer; (void)width; (void)height; (void)depth;
-    return xr::VROverlayError_RequestFailed;
+    if (!buffer || !width || !height || depth != 4)
+        return xr::VROverlayError_InvalidParameter;
+
+    if (!g_D3DVR9 || !g_Game || !g_Game->m_VR)
+        return xr::VROverlayError_RequestFailed;
+
+    IDirect3DDevice9* device = nullptr;
+    if (FAILED(g_D3DVR9->GetD3DDevice(&device)) || !device)
+        return xr::VROverlayError_RequestFailed;
+
+    IDirect3DTexture9* newTexture = nullptr;
+    IDirect3DSurface9* newSurface = nullptr;
+    bool createdTexture = false;
+    HRESULT hr = E_FAIL;
+
+    // Serialize the CPU upload against the helper's GPU reads. Config-panel
+    // updates are infrequent, so idling the device is acceptable and avoids
+    // the helper sampling a half-written texture.
+    g_D3DVR9->WaitDeviceIdle();
+
+    g_D3DVR9->LockDevice();
+    {
+        std::lock_guard<std::mutex> lock(m_overlayMutex);
+        OverlayState* overlay = FindOverlayByHandle(handle);
+        if (!overlay) {
+            g_D3DVR9->UnlockDevice();
+            device->Release();
+            return xr::VROverlayError_UnknownOverlay;
+        }
+
+        if (overlay->rawTexture && overlay->rawSurface &&
+            overlay->rawWidth == width && overlay->rawHeight == height) {
+            newTexture = overlay->rawTexture;
+            newSurface = overlay->rawSurface;
+        }
+    }
+
+    if (!newTexture) {
+        if (g_Game->m_VR->m_CreatingTextureID == VR::Texture_None) {
+            g_Game->m_VR->m_CreatingTextureID = VR::Texture_RawOverlay;
+            hr = device->CreateTexture(width, height, 1, D3DUSAGE_DYNAMIC,
+                D3DFMT_A8R8G8B8, D3DPOOL_DEFAULT, &newTexture, nullptr);
+            g_Game->m_VR->m_CreatingTextureID = VR::Texture_None;
+        }
+        if (SUCCEEDED(hr) && newTexture)
+            hr = newTexture->GetSurfaceLevel(0, &newSurface);
+        createdTexture = true;
+        if (FAILED(hr) || !newTexture || !newSurface) {
+            if (newSurface) { newSurface->Release(); newSurface = nullptr; }
+            if (newTexture) { newTexture->Release(); newTexture = nullptr; }
+            g_D3DVR9->UnlockDevice();
+            device->Release();
+            return xr::VROverlayError_RequestFailed;
+        }
+    }
+
+    D3DLOCKED_RECT locked = {};
+    hr = newTexture->LockRect(0, &locked, nullptr, D3DLOCK_DISCARD);
+    if (SUCCEEDED(hr) && locked.pBits) {
+        const uint8_t* src = static_cast<const uint8_t*>(buffer);
+        uint8_t* dst = static_cast<uint8_t*>(locked.pBits);
+        for (uint32_t y = 0; y < height; ++y) {
+            const uint8_t* srcRow = src + size_t(y) * size_t(width) * 4u;
+            uint8_t* dstRow = dst + size_t(y) * size_t(locked.Pitch);
+            for (uint32_t x = 0; x < width; ++x) {
+                // Panels provide RGBA; D3DFMT_A8R8G8B8 stores BGRA.
+                dstRow[x * 4u + 0u] = srcRow[x * 4u + 2u];
+                dstRow[x * 4u + 1u] = srcRow[x * 4u + 1u];
+                dstRow[x * 4u + 2u] = srcRow[x * 4u + 0u];
+                dstRow[x * 4u + 3u] = srcRow[x * 4u + 3u];
+            }
+        }
+        newTexture->UnlockRect(0);
+    } else {
+        if (SUCCEEDED(hr))
+            newTexture->UnlockRect(0);
+        hr = E_FAIL;
+    }
+    g_D3DVR9->UnlockDevice();
+
+    xr::VRVulkanTextureData_t vulkanData = {};
+    D3D9_TEXTURE_VR_DESC desc = {};
+    if (SUCCEEDED(hr) && SUCCEEDED(g_D3DVR9->TransferSurface(newSurface, FALSE))) {
+        g_D3DVR9->LockDevice();
+        const HRESULT descHr = g_D3DVR9->GetVRDesc(newSurface, &desc);
+        g_D3DVR9->UnlockDevice();
+        if (SUCCEEDED(descHr) && desc.SharedHandleValid != 0)
+            std::memcpy(&vulkanData, &desc, sizeof(vulkanData));
+        else
+            hr = E_FAIL;
+    } else {
+        hr = E_FAIL;
+    }
+
+    if (FAILED(hr)) {
+        if (createdTexture) {
+            if (newSurface)
+                newSurface->Release();
+            if (newTexture)
+                newTexture->Release();
+        } else {
+            // The reused texture failed to upload (typically after a device
+            // reset). Retire it so the next call creates a fresh one.
+            std::lock_guard<std::mutex> lock(m_overlayMutex);
+            OverlayState* overlay = FindOverlayByHandle(handle);
+            if (overlay && overlay->rawTexture == newTexture) {
+                if (overlay->rawTexture || overlay->rawSurface)
+                    m_retiredRawTextures.emplace_back(overlay->rawTexture, overlay->rawSurface);
+                overlay->rawTexture = nullptr;
+                overlay->rawSurface = nullptr;
+                overlay->rawWidth = 0;
+                overlay->rawHeight = 0;
+            }
+        }
+        device->Release();
+        return xr::VROverlayError_RequestFailed;
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(m_overlayMutex);
+        OverlayState* overlay = FindOverlayByHandle(handle);
+        if (!overlay) {
+            if (createdTexture) {
+                if (newSurface)
+                    newSurface->Release();
+                if (newTexture)
+                    newTexture->Release();
+            }
+            device->Release();
+            return xr::VROverlayError_UnknownOverlay;
+        }
+
+        if (overlay->rawTexture != newTexture) {
+            if (overlay->rawTexture || overlay->rawSurface)
+                m_retiredRawTextures.emplace_back(overlay->rawTexture, overlay->rawSurface);
+        }
+        overlay->rawTexture = newTexture;
+        overlay->rawSurface = newSurface;
+        overlay->rawWidth = width;
+        overlay->rawHeight = height;
+        overlay->texture = vulkanData;
+        overlay->bounds = xr::VRTextureBounds_t{ 0.0f, 0.0f, 1.0f, 1.0f };
+        overlay->hasTexture = true;
+        PublishOverlayToBridge(*overlay);
+    }
+    device->Release();
+    return xr::VROverlayError_None;
+}
+
+void HelperBackend::ReleaseRawOverlayTextures() {
+    std::lock_guard<std::mutex> lock(m_overlayMutex);
+    for (OverlayState& overlay : m_overlays) {
+        if (overlay.rawSurface) {
+            overlay.rawSurface->Release();
+            overlay.rawSurface = nullptr;
+        }
+        if (overlay.rawTexture) {
+            overlay.rawTexture->Release();
+            overlay.rawTexture = nullptr;
+        }
+        overlay.rawWidth = 0;
+        overlay.rawHeight = 0;
+        overlay.hasTexture = false;
+        overlay.texture = {};
+        PublishOverlayToBridge(overlay);
+    }
+    for (auto& retired : m_retiredRawTextures) {
+        if (retired.second)
+            retired.second->Release();
+        if (retired.first)
+            retired.first->Release();
+    }
+    m_retiredRawTextures.clear();
+}
+
+void HelperBackend::PublishOverlayFrameOnly() {
+    // The main menu has no eye pair to submit until the first map render, but
+    // the helper still needs an overlay-frame signal to blit the menu quad.
+    const uint32_t frameId = m_submitFrameId.fetch_add(1);
+    L4D2VR_PublishOpenXrOverlayFrame(frameId);
 }
 
 xr::EVROverlayError HelperBackend::SetOverlaySortOrder(xr::VROverlayHandle_t handle, uint32_t sortOrder) {
@@ -1229,6 +1508,7 @@ xr::EVROverlayError HelperBackend::SetOverlaySortOrder(xr::VROverlayHandle_t han
     OverlayState* overlay = FindOverlayByHandle(handle);
     if (!overlay) return xr::VROverlayError_UnknownOverlay;
     overlay->sortOrder = sortOrder;
+    PublishOverlayToBridge(*overlay);
     return xr::VROverlayError_None;
 }
 
@@ -1266,6 +1546,7 @@ xr::EVROverlayError HelperBackend::SetOverlayTransformAbsolute(xr::VROverlayHand
     overlay->transformType = xr::VROverlayTransform_Absolute;
     overlay->transformOrigin = origin;
     overlay->transform = *transform;
+    PublishOverlayToBridge(*overlay);
     return xr::VROverlayError_None;
 }
 
@@ -1277,6 +1558,7 @@ xr::EVROverlayError HelperBackend::SetOverlayTransformTrackedDeviceRelative(xr::
     overlay->transformType = xr::VROverlayTransform_TrackedDeviceRelative;
     overlay->transformDevice = device;
     overlay->transform = *transform;
+    PublishOverlayToBridge(*overlay);
     return xr::VROverlayError_None;
 }
 
@@ -1744,6 +2026,14 @@ int Applications::RemoveApplicationManifest(const char* pchApplicationManifestFu
 
 bool RenderModels::GetComponentStateForDevicePath(const char* pchDevicePath, const char* pchComponentName, VRInputValueHandle_t ulDevicePath, RenderModel_ControllerMode_State_t* pState, RenderModel_ComponentState_t* pComponentState) {
     return B().GetComponentStateForDevicePath(pchDevicePath, pchComponentName, ulDevicePath, pState, pComponentState);
+}
+
+void ReleaseHelperRawOverlays() {
+    HelperBackend::Instance().ReleaseRawOverlayTextures();
+}
+
+void PublishOverlayFrame() {
+    HelperBackend::Instance().PublishOverlayFrameOnly();
 }
 
 } // namespace xr

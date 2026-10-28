@@ -1891,7 +1891,7 @@ namespace dxvk {
             // helper backend; everything else stays on the normal path.
             HANDLE openXrSharedHandle = nullptr;
             HANDLE* effectiveSharedHandle = pSharedHandle;
-            if (pSharedHandle == nullptr && Pool == D3DPOOL_DEFAULT &&
+            if (Pool == D3DPOOL_DEFAULT &&
                 g_Game && g_Game->m_VR && g_Game->m_VR->m_OpenXrHelperBridgeActive) {
                 const VR::TextureID texID = g_Game->m_VR->m_CreatingTextureID;
                 const bool singleSample = desc.MultiSample == D3DMULTISAMPLE_NONE;
@@ -1902,6 +1902,7 @@ namespace dxvk {
                      texID == VR::Texture_RightEyeSubmit ||
                      texID == VR::Texture_HUD ||
                      texID == VR::Texture_Menu ||
+                     texID == VR::Texture_RawOverlay ||
                      texID == VR::Texture_Blank)) {
                     effectiveSharedHandle = &openXrSharedHandle;
                 }

@@ -614,6 +614,14 @@ bool VR::IsGameplayHudRequested() const
         m_HudLiftGestureActive.load(std::memory_order_acquire) != 0;
 }
 
+bool VR::ShouldShowFlatGameplayHud() const
+{
+    // The wrist status and gun-hand ammo HUDs replace the flat gameplay HUD.
+    // Keep the flat HUD for pause/cursor contexts, which call this separately.
+    const bool handHudAvailable = m_LeftWristHudEnabled || m_RightAmmoHudEnabled;
+    return !handHudAvailable && IsGameplayHudRequested();
+}
+
 void VR::MarkQueuedHudFresh(uint64_t holdMs)
 {
     const uint64_t nowMs = static_cast<uint64_t>(GetTickCount64());

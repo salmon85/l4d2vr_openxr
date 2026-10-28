@@ -43,6 +43,8 @@ It's best to subscribe to this mod directly on the Workshop to avoid missing upd
 4. Click to open the L4D2VR Config Panel.
 5. Change the settings and press the Save button to save, or press the Reload button to undo all changes.
 
+Manual magazine/shell reloading is disabled by default so pressing Reload performs a normal automatic reload. To use physical magazine pickups, set `MagazineInteractionEnabled=true` in `vr/config.txt` (or enable **Hands / Reload → Manual Reload** in the config panel).
+
 ## ReShade
 1. Download [ReShade](https://reshade.me/).
 2. Select the rendering API Left 4 Dead 2 uses: Vulkan + OpenXR.

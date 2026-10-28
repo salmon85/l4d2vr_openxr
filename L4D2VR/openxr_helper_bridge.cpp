@@ -237,8 +237,12 @@ namespace
         const L4D2VROpenXrOverlayDesc& lhs,
         const L4D2VROpenXrOverlayDesc& rhs)
     {
-        return lhs.valid == rhs.valid &&
+        if (!(lhs.valid == rhs.valid &&
             lhs.visible == rhs.visible &&
+            lhs.reserved0 == rhs.reserved0 &&
+            lhs.reserved1 == rhs.reserved1 &&
+            lhs.transformValid == rhs.transformValid &&
+            lhs.sortOrder == rhs.sortOrder &&
             lhs.widthMeters == rhs.widthMeters &&
             lhs.heightMeters == rhs.heightMeters &&
             lhs.distanceMeters == rhs.distanceMeters &&
@@ -250,7 +254,17 @@ namespace
             lhs.orientation[1] == rhs.orientation[1] &&
             lhs.orientation[2] == rhs.orientation[2] &&
             lhs.orientation[3] == rhs.orientation[3] &&
-            SameSharedTextureDesc(lhs.texture, rhs.texture);
+            SameSharedTextureDesc(lhs.texture, rhs.texture)))
+        {
+            return false;
+        }
+
+        for (int i = 0; i < 12; ++i)
+        {
+            if (lhs.transform[i] != rhs.transform[i])
+                return false;
+        }
+        return true;
     }
 }
 
