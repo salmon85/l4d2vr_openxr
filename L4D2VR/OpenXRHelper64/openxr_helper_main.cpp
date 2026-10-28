@@ -2300,7 +2300,7 @@ namespace
 
         static const std::array<BooleanActionDef, 32>& BooleanDefs();
         static const std::array<BooleanActionDef, 4>& ExtraBooleanDefs();
-        static const std::array<FloatDigitalActionDef, 6>& FloatDigitalDefs();
+        static const std::array<FloatDigitalActionDef, 5>& FloatDigitalDefs();
         static const std::array<AnalogActionDef, 2>& AnalogDefs();
 
         bool Path(const char* text, XrPath& out, Logger& log);
@@ -4713,9 +4713,9 @@ float4 main(float4 position : SV_Position, float2 uv : TEXCOORD0) : SV_Target
         return defs;
     }
 
-    const std::array<OpenXrInputBridge::FloatDigitalActionDef, 6>& OpenXrInputBridge::FloatDigitalDefs()
+    const std::array<OpenXrInputBridge::FloatDigitalActionDef, 5>& OpenXrInputBridge::FloatDigitalDefs()
     {
-        static const std::array<FloatDigitalActionDef, 6> defs =
+        static const std::array<FloatDigitalActionDef, 5> defs =
         {{
             { L4D2VROpenXrActionId::PrimaryAttack, "primary_attack", "Primary Attack", 0.45f },
             { L4D2VROpenXrActionId::SecondaryAttack, "secondary_attack_value", "Secondary Attack Value", 0.45f },
@@ -4795,6 +4795,12 @@ float4 main(float4 position : SV_Position, float2 uv : TEXCOORD0) : SV_Target
 
     bool OpenXrInputBridge::CreateAction(XrActionSet set, XrActionType type, const char* name, const char* localizedName, XrAction& out, Logger& log)
     {
+        if (!name || !name[0] || !localizedName || !localizedName[0])
+        {
+            log.Print("xrCreateAction skipped: action definition has an empty name");
+            return false;
+        }
+
         XrActionCreateInfo createInfo{ XR_TYPE_ACTION_CREATE_INFO };
         std::snprintf(createInfo.actionName, XR_MAX_ACTION_NAME_SIZE, "%s", name);
         createInfo.actionType = type;
