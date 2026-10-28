@@ -1595,7 +1595,10 @@ public:
 	// Base HUD/menu overlays must stay hidden so the controller laser cannot
 	// hit them instead of the panel.
 	std::atomic<bool> m_ConfigOverlayModalActive{ false };
+	std::atomic<bool> m_ConfigOverlayResumeGameRequested{ false };
+	std::atomic<bool> m_ConfigOverlayResumeGameAcknowledged{ false };
 	bool m_PreviousGameMenuInputActive = false;
+	bool m_GameHudOverlayHovered = false;
 	// Edge latches for direct left-stick menu navigation. The helper also
 	// synthesizes MenuUp/Down/Left/Right, but reading the analog axis here
 	// keeps navigation working on runtimes that do not expose those paths.
@@ -3941,6 +3944,7 @@ public:
 	void UpdateHudLiftGestureState(bool inGame);
 	bool IsGameplayHudRequested() const;
 	bool ShouldShowFlatGameplayHud() const;
+	bool ShouldShowFlatHudForMenu() const;
 	void MarkQueuedHudFresh(uint64_t holdMs = 300);
 	void ClearQueuedHudFresh();
 	bool IsQueuedHudFresh() const;

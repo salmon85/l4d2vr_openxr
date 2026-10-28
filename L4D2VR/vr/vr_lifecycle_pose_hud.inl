@@ -698,16 +698,10 @@ void VR::ProcessMenuInput()
                 true);
         }
         overlayApi->HideOverlay(m_MainMenuHandle);
-        if (configModal)
-        {
-            // The config panel is modal: keep the game HUD hidden so the
-            // controller laser can only hit the panel.
-            overlayApi->HideOverlay(m_HUDTopHandle);
-        }
-        else
-        {
+        if (!configModal && ShouldShowFlatHudForMenu())
             overlayApi->ShowOverlay(m_HUDTopHandle);
-        }
+        else
+            overlayApi->HideOverlay(m_HUDTopHandle);
         for (xr::VROverlayHandle_t& overlay : m_HUDBottomHandles)
             overlayApi->HideOverlay(overlay);
     }
@@ -723,7 +717,10 @@ void VR::ProcessMenuInput()
     // While the config panel is open, the config worker handles navigation,
     // activation, and closing. Do not feed the base VGUI menu behind it.
     if (configModal)
+    {
+        m_GameHudOverlayHovered = false;
         return;
+    }
 
     const auto controllerHoveringOverlay = [&](xr::VROverlayHandle_t overlay)
         {
@@ -763,6 +760,7 @@ void VR::ProcessMenuInput()
 
     const bool isHudOverlay = inGame && (currentOverlay == m_HUDTopHandle ||
         std::find(m_HUDBottomHandles.begin(), m_HUDBottomHandles.end(), currentOverlay) != m_HUDBottomHandles.end());
+    m_GameHudOverlayHovered = inGame && isHoveringOverlay && isHudOverlay;
 
     // Overlays can't process action inputs if the laser is active, so
     // only activate laser if a controller is pointing at the overlay.

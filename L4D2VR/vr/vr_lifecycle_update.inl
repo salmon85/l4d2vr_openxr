@@ -1600,6 +1600,21 @@ void VR::Update()
     if (!m_Game->m_Initialized)
         return;
 
+    if (m_ConfigOverlayResumeGameRequested.exchange(false, std::memory_order_acq_rel))
+    {
+        const bool paused =
+            m_Game->m_EngineClient && m_Game->m_EngineClient->IsPaused();
+        const bool cursorVisible =
+            m_Game->m_VguiSurface && m_Game->m_VguiSurface->IsCursorVisible();
+        if (m_Game->m_EngineClient && m_Game->m_EngineClient->IsInGame() &&
+            (paused || cursorVisible))
+        {
+            m_Game->ClientCmd_Unrestricted("gameui_hide\n");
+            m_Game->ClientCmd("gameui_hide\n");
+        }
+        m_ConfigOverlayResumeGameAcknowledged.store(true, std::memory_order_release);
+    }
+
     const bool profilePresentSpikeUpdate = m_PresentSpikeDebugLog;
     auto presentSpikeUpdatePhaseStart = profilePresentSpikeUpdate
         ? std::chrono::steady_clock::now()
@@ -2181,7 +2196,7 @@ void VR::Update()
     // The hand HUDs replace the flat gameplay HUD. Hide it again after input
     // so a transient menu/cursor state (or the asynchronous helper reading the
     // overlay between show and hide) can never leave it visible.
-    if (configOverlayModal || (!menuInputActive && (m_LeftWristHudEnabled || m_RightAmmoHudEnabled)))
+    if (configOverlayModal || !(ShouldShowFlatHudForMenu() || ShouldShowFlatGameplayHud()))
         xr::VROverlay()->HideOverlay(m_HUDTopHandle);
 
     // UpdateTracking publishes the queued ViewParams snapshot before ProcessInput,
@@ -4817,9 +4832,7 @@ void VR::SubmitVRTextures()
 
 
     xr::VROverlay()->HideOverlay(m_MainMenuHandle);
-    const bool focusedVguiHud =
-        (m_Game && m_Game->m_EngineClient && m_Game->m_EngineClient->IsPaused()) ||
-        (m_Game && m_Game->m_VguiSurface && m_Game->m_VguiSurface->IsCursorVisible());
+    const bool focusedVguiHud = ShouldShowFlatHudForMenu();
     const bool configOverlayModal = m_ConfigOverlayModalActive.load(std::memory_order_acquire);
     const bool wantsTopHudOverlay = !configOverlayModal && (focusedVguiHud || ShouldShowFlatGameplayHud());
     {

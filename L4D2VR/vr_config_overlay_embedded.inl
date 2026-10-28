@@ -6794,6 +6794,31 @@ FlashlightEnhancementEnabled=false
         return true;
     }
 
+    static bool CfgResumeGameForPanel()
+    {
+        if (!g_Game)
+            return false;
+
+        VR* vr = g_Game->m_VR;
+        if (!vr)
+            return false;
+
+        vr->m_ConfigOverlayModalActive.store(true, std::memory_order_release);
+        vr->m_ConfigOverlayResumeGameAcknowledged.store(false, std::memory_order_release);
+        vr->m_ConfigOverlayResumeGameRequested.store(true, std::memory_order_release);
+
+        // A paused Source client can stop presenting. Ask the game thread to
+        // close the pause UI and wait briefly for it to run, so the overlay
+        // upload happens while Present is alive.
+        for (int i = 0; i < 50; ++i)
+        {
+            if (vr->m_ConfigOverlayResumeGameAcknowledged.load(std::memory_order_acquire))
+                return true;
+            Sleep(10);
+        }
+        return false;
+    }
+
     static bool CfgCloseSourceGameUiIfCalibrationActive(const CfgOverlayState& s)
     {
         if (!s.visible || s.panelMode != CfgPanelMode::MagazineCalibration)
@@ -7207,7 +7232,7 @@ FlashlightEnhancementEnabled=false
         CfgLoad(s);
         CfgInvalidateFixedPlacement(s);
         CfgApplyOverlayPlacement(s, ov);
-        const bool closedSourceGameUi = CfgCloseSourceGameUiIfCalibrationActive(s);
+        const bool closedSourceGameUi = CfgResumeGameForPanel();
         s.status = s.useChinese
             ? "\345\267\262\346\211\223\345\274\200\343\200\202\347\224\250 VR \346\216\247\345\210\266\345\231\250\345\260\204\347\272\277\347\202\271\345\207\273\346\214\211\351\222\256\343\200\202"
             : "Opened. Point and click with the VR controller laser.";
@@ -9802,7 +9827,7 @@ FlashlightEnhancementEnabled=false
                     s.calibrationBoltPullFirstRunBlockedProfileKey.clear();
                     s.calibrationBoltPullFirstRunSaveSkipped = false;
                 }
-                const bool closedSourceGameUi = CfgCloseSourceGameUiIfCalibrationActive(s);
+                const bool closedSourceGameUi = s.visible ? CfgResumeGameForPanel() : false;
                 s.status = s.visible
                     ? (s.useChinese ? "\345\267\262\346\211\223\345\274\200\343\200\202\347\224\250 VR \346\216\247\345\210\266\345\231\250\345\260\204\347\272\277\347\202\271\345\207\273\346\214\211\351\222\256\343\200\202" : "Opened. Point and click with the VR controller laser.")
                     : (s.useChinese ? "\345\267\262\345\205\263\351\227\255\343\200\202\346\214\211 F8 \345\217\257\351\207\215\346\226\260\346\211\223\345\274\200\343\200\202" : "Closed. Press F8 to reopen.");
