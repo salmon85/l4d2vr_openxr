@@ -30,6 +30,10 @@ extern "C" bool __cdecl L4D2VR_QueryDataCacheUsage(
 namespace
 {
     constexpr int kCfgOverlayW = 1280;
+    // In-headset config panel activation is disabled: opening it has been
+    // crashing the game under Wine/WiVRn. Configuration remains available by
+    // editing vr/config.txt on the desktop.
+    constexpr bool kCfgOverlayOpenEnabled = false;
     constexpr int kCfgOverlayH = 900;
     constexpr int kCfgOverlayRowH = 46;
     constexpr int kCfgOverlayGroupH = 32;
@@ -7223,6 +7227,8 @@ FlashlightEnhancementEnabled=false
 
     static void CfgOpenPanelFromMenuButton(CfgOverlayState& s, xr::Overlay* ov)
     {
+        if (!kCfgOverlayOpenEnabled)
+            return;
         if (!ov)
             ov = xr::VROverlay();
 
@@ -7296,7 +7302,7 @@ FlashlightEnhancementEnabled=false
             return;
 
         const bool shouldShowButton =
-            !s.visible && !s.materialVisible && CfgIsPauseMenuActive();
+            kCfgOverlayOpenEnabled && !s.visible && !s.materialVisible && CfgIsPauseMenuActive();
         if (!shouldShowButton)
         {
             CfgHideMenuButton(s);
@@ -9824,9 +9830,13 @@ FlashlightEnhancementEnabled=false
                 {
                     CfgCloseMaterialPanel(s, true);
                 }
-                else
+                else if (s.visible)
                 {
-                    s.visible = !s.visible;
+                    s.visible = false;
+                }
+                else if (kCfgOverlayOpenEnabled)
+                {
+                    s.visible = true;
                 }
                 s.resetConfirmVisible = false;
                 s.hoverSelectionSuppressedUntilMs = 0;
@@ -9941,6 +9951,9 @@ FlashlightEnhancementEnabled=false
 
 void L4D2VRConfigOverlay_StartWorker()
 {
+    if (!kCfgOverlayOpenEnabled)
+        return;
+
     bool expected = false;
     if (!g_CfgOverlay.workerStarted.compare_exchange_strong(expected, true))
         return;
@@ -9954,6 +9967,12 @@ void L4D2VRConfigOverlay_StartWorker()
 void L4D2VRConfigOverlay_Open()
 {
     L4D2VRConfigOverlay_StartWorker();
+
+    if (!kCfgOverlayOpenEnabled)
+    {
+        Game::logMsg("[VR][ConfigOverlay] in-headset panel disabled; edit vr/config.txt on the desktop");
+        return;
+    }
 
     CfgOverlayState& s = g_CfgOverlay;
     std::lock_guard<std::mutex> lock(s.mutex);

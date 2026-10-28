@@ -1597,6 +1597,31 @@ xr::EVROverlayError HelperBackend::ShowOverlay(xr::VROverlayHandle_t handle) {
     std::lock_guard<std::mutex> lock(m_overlayMutex);
     OverlayState* overlay = FindOverlayByHandle(handle);
     if (!overlay) return xr::VROverlayError_UnknownOverlay;
+
+    // The hand HUDs replace the flat game HUD. Source can call ShowOverlay on
+    // the HUD handle one more time while a pause/menu transition settles; deny
+    // it here so the stale pause panel (or its cleared black texture) cannot
+    // remain in the headset after the menu closes.
+    VR* vr = g_Game ? g_Game->m_VR : nullptr;
+    if (vr && overlay->key == "HUDOverlayTopKey")
+    {
+        const bool handHuds = vr->m_LeftWristHudEnabled || vr->m_RightAmmoHudEnabled;
+        const bool paused =
+            vr->m_Game && vr->m_Game->m_EngineClient && vr->m_Game->m_EngineClient->IsPaused();
+        if (handHuds && !paused)
+        {
+            static int s_hudShowDeniedLogBudget = 8;
+            if (s_hudShowDeniedLogBudget > 0)
+            {
+                --s_hudShowDeniedLogBudget;
+                Game::logMsg("[VR][HUD] denied flat HUD show during gameplay");
+            }
+            overlay->visible = false;
+            PublishOverlayToBridge(*overlay);
+            return xr::VROverlayError_None;
+        }
+    }
+
     overlay->visible = true;
     PublishOverlayToBridge(*overlay);
     return xr::VROverlayError_None;
