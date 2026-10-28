@@ -7232,7 +7232,23 @@ FlashlightEnhancementEnabled=false
         CfgLoad(s);
         CfgInvalidateFixedPlacement(s);
         CfgApplyOverlayPlacement(s, ov);
-        const bool closedSourceGameUi = CfgResumeGameForPanel();
+        const bool resumedGame = CfgResumeGameForPanel();
+        if (!resumedGame)
+        {
+            s.visible = false;
+            CfgSetBaseOverlaysBlocked(s, false, ov);
+            s.status = s.useChinese
+                ? "\xE6\x97\xA0\xE6\xB3\x95\xE6\x81\xA2\xE5\xA4\x8D\xE6\xB8\xB8\xE6\x88\x8F\xE7\x94\xBB\xE9\x9D\xA2\xEF\xBC\x8C\xE9\x85\x8D\xE7\xBD\xAE\xE9\x9D\xA2\xE6\x9D\xBF\xE6\x9C\xAA\xE6\x89\x93\xE5\xBC\x80\xE3\x80\x82"
+                : "Could not resume the game; config panel was not opened.";
+            s.dirty = true;
+            CfgSetMenuButtonInputGuard(s, false, ov);
+            if (ov && CfgIsValidOverlayHandle(s.menuButtonHandle))
+                ov->HideOverlay(s.menuButtonHandle);
+            s.menuButtonHovered = false;
+            s.menuButtonManualSelectPrev = false;
+            return;
+        }
+        const bool closedSourceGameUi = resumedGame;
         s.status = s.useChinese
             ? "\345\267\262\346\211\223\345\274\200\343\200\202\347\224\250 VR \346\216\247\345\210\266\345\231\250\345\260\204\347\272\277\347\202\271\345\207\273\346\214\211\351\222\256\343\200\202"
             : "Opened. Point and click with the VR controller laser.";
@@ -9827,10 +9843,21 @@ FlashlightEnhancementEnabled=false
                     s.calibrationBoltPullFirstRunBlockedProfileKey.clear();
                     s.calibrationBoltPullFirstRunSaveSkipped = false;
                 }
-                const bool closedSourceGameUi = s.visible ? CfgResumeGameForPanel() : false;
-                s.status = s.visible
-                    ? (s.useChinese ? "\345\267\262\346\211\223\345\274\200\343\200\202\347\224\250 VR \346\216\247\345\210\266\345\231\250\345\260\204\347\272\277\347\202\271\345\207\273\346\214\211\351\222\256\343\200\202" : "Opened. Point and click with the VR controller laser.")
-                    : (s.useChinese ? "\345\267\262\345\205\263\351\227\255\343\200\202\346\214\211 F8 \345\217\257\351\207\215\346\226\260\346\211\223\345\274\200\343\200\202" : "Closed. Press F8 to reopen.");
+                const bool wasOpening = s.visible;
+                const bool resumedGame = wasOpening ? CfgResumeGameForPanel() : true;
+                const bool closedSourceGameUi = wasOpening && resumedGame;
+                if (wasOpening && !resumedGame)
+                {
+                    s.visible = false;
+                    CfgSetBaseOverlaysBlocked(s, false);
+                }
+                s.status = (!wasOpening || !resumedGame)
+                    ? (s.useChinese ? "\345\267\262\345\205\263\351\227\255\343\200\202\346\214\211 F8 \345\217\257\351\207\215\346\226\260\346\211\223\345\274\200\343\200\202" : "Closed. Press F8 to reopen.")
+                    : (s.useChinese ? "\345\267\262\346\211\223\345\274\200\343\200\202\347\224\250 VR \346\216\247\345\210\266\345\231\250\345\260\204\347\272\277\347\202\271\345\207\273\346\214\211\351\222\256\343\200\202" : "Opened. Point and click with the VR controller laser.");
+                if (wasOpening && !resumedGame)
+                    s.status = s.useChinese
+                        ? "\xE6\x97\xA0\xE6\xB3\x95\xE6\x81\xA2\xE5\xA4\x8D\xE6\xB8\xB8\xE6\x88\x8F\xE7\x94\xBB\xE9\x9D\xA2\xEF\xBC\x8C\xE9\x85\x8D\xE7\xBD\xAE\xE9\x9D\xA2\xE6\x9D\xBF\xE6\x9C\xAA\xE6\x89\x93\xE5\xBC\x80\xE3\x80\x82"
+                        : "Could not resume the game; config panel was not opened.";
                 if (closedSourceGameUi)
                     s.status += s.useChinese ? "\xE5\xB7\xB2\xE5\x85\xB3\xE9\x97\xAD\xE6\xB8\xB8\xE6\x88\x8F\xE6\x9A\x82\xE5\x81\x9C\xE8\x8F\x9C\xE5\x8D\x95\xE3\x80\x82" : " Game pause menu closed.";
                 CfgApplyCalibrationRuntimeState(s);
