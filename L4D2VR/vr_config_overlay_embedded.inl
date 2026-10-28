@@ -6813,9 +6813,13 @@ FlashlightEnhancementEnabled=false
         for (int i = 0; i < 50; ++i)
         {
             if (vr->m_ConfigOverlayResumeGameAcknowledged.load(std::memory_order_acquire))
+            {
+                Game::logMsg("[VR][ConfigOverlay] resumed game for panel");
                 return true;
+            }
             Sleep(10);
         }
+        Game::logMsg("[VR][ConfigOverlay] resume timeout; panel not opened");
         return false;
     }
 

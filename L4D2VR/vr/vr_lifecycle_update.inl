@@ -1611,6 +1611,7 @@ void VR::Update()
         {
             m_Game->ClientCmd_Unrestricted("gameui_hide\n");
             m_Game->ClientCmd("gameui_hide\n");
+            Game::logMsg("[VR][ConfigOverlay] gameui_hide sent paused=%d cursor=%d", paused ? 1 : 0, cursorVisible ? 1 : 0);
         }
         m_ConfigOverlayResumeGameAcknowledged.store(true, std::memory_order_release);
     }
