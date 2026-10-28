@@ -757,6 +757,13 @@ namespace
         bool visible = false;
         bool materialVisible = false;
         bool prevF8 = false;
+        // Controller navigation edge latches for the config panel.
+        bool ctrlBackPrev = false;
+        bool ctrlActivatePrev = false;
+        bool ctrlNavUpPrev = false;
+        bool ctrlNavDownPrev = false;
+        bool ctrlNavLeftPrev = false;
+        bool ctrlNavRightPrev = false;
         bool resetConfirmVisible = false;
         bool advancedMode = false;
         bool dirty = true;
@@ -6806,6 +6813,7 @@ FlashlightEnhancementEnabled=false
     {
         if (!g_Game || !g_Game->m_VR)
             return;
+        g_Game->m_VR->m_ConfigOverlayModalActive.store(blocked, std::memory_order_release);
         if (!ov)
             ov = xr::VROverlay();
         if (!ov)
@@ -7167,6 +7175,9 @@ FlashlightEnhancementEnabled=false
         s.resetConfirmVisible = false;
         s.selected = 0;
         s.scroll = 0;
+        // Require a fresh controller press before closing or activating.
+        s.ctrlBackPrev = true;
+        s.ctrlActivatePrev = true;
         CfgLoad(s);
         CfgInvalidateFixedPlacement(s);
         CfgApplyOverlayPlacement(s, ov);
@@ -9478,6 +9489,193 @@ FlashlightEnhancementEnabled=false
         }
     }
 
+    static bool CfgReadHeldAction(xr::VRActionHandle_t& actionHandle)
+    {
+        if (!g_Game || !g_Game->m_VR || actionHandle == xr::k_ulInvalidActionHandle)
+            return false;
+
+        xr::InputDigitalActionData_t data{};
+        if (!g_Game->m_VR->GetDigitalActionData(actionHandle, data))
+            return false;
+        return data.bState;
+    }
+
+    static bool CfgEdgePressed(bool held, bool& previous)
+    {
+        const bool pressed = held && !previous;
+        previous = held;
+        return pressed;
+    }
+
+    static void CfgClosePanel(CfgOverlayState& s)
+    {
+        if (xr::Overlay* ov = xr::VROverlay())
+        {
+            if (s.keyboardActive)
+                ov->HideKeyboard();
+        }
+        s.keyboardActive = false;
+        s.keyboardEditKey.clear();
+        s.keyboardEventHandle = xr::k_ulOverlayHandleInvalid;
+        s.keyboardUserValue = 0;
+        s.resetConfirmVisible = false;
+        s.visible = false;
+        s.hoverSelectionSuppressedUntilMs = 0;
+        s.hoveredItem = -1;
+        s.calibrationBoltPullFirstRunBlockedProfileKey.clear();
+        s.calibrationBoltPullFirstRunSaveSkipped = false;
+        CfgApplyCalibrationRuntimeState(s);
+        s.status = s.useChinese
+            ? "\345\267\262\345\205\263\351\227\255\343\200\202\346\214\211 F8 \345\217\257\351\207\215\346\226\260\346\211\223\345\274\200\343\200\202"
+            : "Closed. Press F8 to reopen.";
+        s.dirty = true;
+    }
+
+    static void CfgMoveSelectedRow(CfgOverlayState& s, int dir)
+    {
+        if (s.panelMode != CfgPanelMode::Config)
+        {
+            MagazineInteractionCalibrationSnapshot snapshot{};
+            int maxScroll = 0;
+            if (CfgReadFreshCalibrationSnapshot(snapshot))
+            {
+                const std::vector<CfgCalibrationBoneRow> rows =
+                    CfgBuildCalibrationRows(snapshot, std::clamp(s.calibrationStep, 0, kCfgCalibrationStepMax));
+                maxScroll = std::max(0, static_cast<int>(rows.size()) - kCfgCalibrationBoneRowsVisible);
+            }
+            const int nextScroll = std::clamp(s.calibrationScroll + dir, 0, maxScroll);
+            if (nextScroll != s.calibrationScroll)
+            {
+                s.calibrationScroll = nextScroll;
+                s.dirty = true;
+            }
+            return;
+        }
+
+        const int total = static_cast<int>(s.visibleSpecIndexes.size());
+        if (total <= 0)
+            return;
+
+        int item = std::clamp(s.selected, 0, total - 1);
+        for (int attempt = 0; attempt < total; ++attempt)
+        {
+            const int next = item + dir;
+            if (next < 0 || next >= total)
+                break;
+            item = next;
+            if (CfgIsSelectableRow(s, item))
+            {
+                s.selected = item;
+                CfgEnsureSelectedVisible(s);
+                CfgSuppressHoverSelectionAfterScroll(s);
+                s.dirty = true;
+                break;
+            }
+        }
+    }
+
+    static void CfgActivateSelectedRow(CfgOverlayState& s)
+    {
+        if (s.panelMode != CfgPanelMode::Config)
+            return;
+
+        const int total = static_cast<int>(s.visibleSpecIndexes.size());
+        if (s.selected < 0 || s.selected >= total)
+            return;
+
+        const CfgOptionSpec& spec = kCfgOptionSpecs[s.visibleSpecIndexes[s.selected]];
+        if (std::strcmp(spec.key, "HiddenMaterialNames") == 0)
+        {
+            CfgOpenMaterialPanel(s);
+            return;
+        }
+        if (CfgIsKeyboardEditable(spec))
+        {
+            CfgBeginStringEdit(s, spec);
+            return;
+        }
+        if (CfgIsAdjustable(spec) || CfgIsComponentEditable(spec))
+        {
+            CfgAdjustSelected(s, +1);
+            return;
+        }
+
+        s.status = std::string(s.useChinese ? "\346\255\244\351\200\211\351\241\271\344\270\215\350\203\275\345\234\250 VR \351\235\242\346\235\277\344\270\255\347\274\226\350\276\221\357\274\232" : "This option is not editable in the VR panel: ") + spec.key;
+        s.dirty = true;
+    }
+
+    static void CfgHandleControllerInput(CfgOverlayState& s)
+    {
+        if (!g_Game || !g_Game->m_VR || !s.visible || s.materialVisible)
+            return;
+
+        VR* vrState = g_Game->m_VR;
+        const bool backHeld =
+            CfgReadHeldAction(vrState->m_MenuBack) ||
+            CfgReadHeldAction(vrState->m_Pause);
+        const bool activateHeld =
+            CfgReadHeldAction(vrState->m_MenuSelect) ||
+            CfgReadHeldAction(vrState->m_ActionPrimaryAttack);
+
+        if (CfgEdgePressed(backHeld, s.ctrlBackPrev))
+        {
+            if (s.resetConfirmVisible)
+            {
+                s.resetConfirmVisible = false;
+                s.status = s.useChinese ? "\345\267\262\345\217\226\346\266\210\351\207\215\347\275\256\343\200\202" : "Reset cancelled.";
+                s.dirty = true;
+            }
+            else
+            {
+                CfgClosePanel(s);
+            }
+            return;
+        }
+
+        if (CfgEdgePressed(activateHeld, s.ctrlActivatePrev) && !s.resetConfirmVisible)
+            CfgActivateSelectedRow(s);
+
+        bool stickUp = false;
+        bool stickDown = false;
+        bool stickLeft = false;
+        bool stickRight = false;
+        {
+            xr::InputAnalogActionData_t stick{};
+            if (vrState->GetAnalogActionData(vrState->m_ActionWalk, stick))
+            {
+                constexpr float kNavPress = 0.62f;
+                constexpr float kNavRelease = 0.36f;
+                const auto edge = [&](float value, bool& previous)
+                    {
+                        const bool down = previous ? (value > kNavRelease) : (value > kNavPress);
+                        const bool pressed = down && !previous;
+                        previous = down;
+                        return pressed;
+                    };
+                stickUp = edge(stick.y, s.ctrlNavUpPrev);
+                stickDown = edge(-stick.y, s.ctrlNavDownPrev);
+                stickRight = edge(stick.x, s.ctrlNavRightPrev);
+                stickLeft = edge(-stick.x, s.ctrlNavLeftPrev);
+            }
+            else
+            {
+                s.ctrlNavUpPrev = false;
+                s.ctrlNavDownPrev = false;
+                s.ctrlNavLeftPrev = false;
+                s.ctrlNavRightPrev = false;
+            }
+        }
+
+        if (stickUp)
+            CfgMoveSelectedRow(s, -1);
+        if (stickDown)
+            CfgMoveSelectedRow(s, +1);
+        if (stickLeft)
+            CfgAdjustSelected(s, -1);
+        if (stickRight)
+            CfgAdjustSelected(s, +1);
+    }
+
     static void CfgOverlayThreadMain()
     {
         while (true)
@@ -9504,6 +9702,9 @@ FlashlightEnhancementEnabled=false
                 {
                     s.selected = 0;
                     s.scroll = 0;
+                    // Require a fresh controller press before closing or activating.
+                    s.ctrlBackPrev = true;
+                    s.ctrlActivatePrev = true;
                     CfgLoad(s);
                     CfgInvalidateFixedPlacement(s);
                     CfgApplyOverlayPlacement(s);
@@ -9576,6 +9777,7 @@ FlashlightEnhancementEnabled=false
             CfgApplyCalibrationRuntimeState(s);
             CfgApplyOverlayPlacement(s, ov);
             CfgPollOverlayEvents(s);
+            CfgHandleControllerInput(s);
             if (s.materialVisible)
                 continue;
             CfgMarkDirtyIfCalibrationSnapshotChanged(s);

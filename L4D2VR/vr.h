@@ -1479,7 +1479,6 @@ public:
 	// Any locomotion (keyboard WASD, thumbstick, etc.) detected in the current CreateMove.
 	// Used to avoid conflicts with 1:1 roomscale movement/camera decoupling.
 	bool m_LocomotionActive = false;
-	bool m_CrouchToggleActive = false;
 	bool m_VoiceRecordActive = false;
 	bool m_VoiceRecordCmdOwned = false;
 	bool m_SpeechToTextCaptureActive = false;
@@ -1592,6 +1591,10 @@ public:
 	// CreateMove hook reads this to strip locomotion/action bits from the
 	// player command instead of moving the player behind the pause menu.
 	std::atomic<bool> m_GameMenuInputActive{ false };
+	// True while the L4D2VR config overlay (the in-game F8 panel) is modal.
+	// Base HUD/menu overlays must stay hidden so the controller laser cannot
+	// hit them instead of the panel.
+	std::atomic<bool> m_ConfigOverlayModalActive{ false };
 	bool m_PreviousGameMenuInputActive = false;
 	// Edge latches for direct left-stick menu navigation. The helper also
 	// synthesizes MenuUp/Down/Left/Right, but reading the analog axis here

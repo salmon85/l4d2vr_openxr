@@ -2157,9 +2157,11 @@ void VR::Update()
         return;
     }
 
+    const bool configOverlayModal = m_ConfigOverlayModalActive.load(std::memory_order_acquire);
     const bool menuInputActive =
         (m_Game->m_EngineClient && m_Game->m_EngineClient->IsPaused()) ||
-        m_Game->m_VguiSurface->IsCursorVisible();
+        m_Game->m_VguiSurface->IsCursorVisible() ||
+        configOverlayModal;
     m_GameMenuInputActive.store(menuInputActive, std::memory_order_release);
 
     if (menuInputActive)
@@ -2175,6 +2177,12 @@ void VR::Update()
         ProcessInput();
     }
     m_PreviousGameMenuInputActive = menuInputActive;
+
+    // The hand HUDs replace the flat gameplay HUD. Hide it again after input
+    // so a transient menu/cursor state (or the asynchronous helper reading the
+    // overlay between show and hide) can never leave it visible.
+    if (configOverlayModal || (!menuInputActive && (m_LeftWristHudEnabled || m_RightAmmoHudEnabled)))
+        xr::VROverlay()->HideOverlay(m_HUDTopHandle);
 
     // UpdateTracking publishes the queued ViewParams snapshot before ProcessInput,
     // while smooth/snap turning modifies m_RotationOffset inside ProcessInput.
@@ -4812,7 +4820,28 @@ void VR::SubmitVRTextures()
     const bool focusedVguiHud =
         (m_Game && m_Game->m_EngineClient && m_Game->m_EngineClient->IsPaused()) ||
         (m_Game && m_Game->m_VguiSurface && m_Game->m_VguiSurface->IsCursorVisible());
-    const bool wantsTopHudOverlay = focusedVguiHud || ShouldShowFlatGameplayHud();
+    const bool configOverlayModal = m_ConfigOverlayModalActive.load(std::memory_order_acquire);
+    const bool wantsTopHudOverlay = !configOverlayModal && (focusedVguiHud || ShouldShowFlatGameplayHud());
+    {
+        static int s_lastFlatHudVisible = -1;
+        const int visibleNow = wantsTopHudOverlay ? 1 : 0;
+        if (visibleNow != s_lastFlatHudVisible)
+        {
+            s_lastFlatHudVisible = visibleNow;
+            const bool paused = m_Game && m_Game->m_EngineClient && m_Game->m_EngineClient->IsPaused();
+            const bool cursor = m_Game && m_Game->m_VguiSurface && m_Game->m_VguiSurface->IsCursorVisible();
+            Game::logMsg("[VR][HUD] flat visible=%d paused=%d cursor=%d handLeft=%d handRight=%d always=%d hold=%d lift=%d configModal=%d",
+                visibleNow,
+                paused ? 1 : 0,
+                cursor ? 1 : 0,
+                m_LeftWristHudEnabled ? 1 : 0,
+                m_RightAmmoHudEnabled ? 1 : 0,
+                m_HudAlwaysVisible ? 1 : 0,
+                m_HudShowActionHeld.load(std::memory_order_acquire),
+                m_HudLiftGestureActive.load(std::memory_order_acquire),
+                configOverlayModal ? 1 : 0);
+        }
+    }
     if (wantsTopHudOverlay)
     {
         applyHudTexture(m_HUDTopHandle, topBounds);

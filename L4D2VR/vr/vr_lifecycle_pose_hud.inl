@@ -652,6 +652,7 @@ bool VR::GetAnalogActionData(xr::VRActionHandle_t& actionHandle, xr::InputAnalog
 void VR::ProcessMenuInput()
 {
     const bool inGame = m_Game->m_EngineClient->IsInGame();
+    const bool configModal = m_ConfigOverlayModalActive.load(std::memory_order_acquire);
     xr::VROverlayHandle_t currentOverlay = inGame ? m_HUDTopHandle : m_MainMenuHandle;
 
     xr::Overlay* overlayApi = xr::VROverlay();
@@ -697,7 +698,16 @@ void VR::ProcessMenuInput()
                 true);
         }
         overlayApi->HideOverlay(m_MainMenuHandle);
-        overlayApi->ShowOverlay(m_HUDTopHandle);
+        if (configModal)
+        {
+            // The config panel is modal: keep the game HUD hidden so the
+            // controller laser can only hit the panel.
+            overlayApi->HideOverlay(m_HUDTopHandle);
+        }
+        else
+        {
+            overlayApi->ShowOverlay(m_HUDTopHandle);
+        }
         for (xr::VROverlayHandle_t& overlay : m_HUDBottomHandles)
             overlayApi->HideOverlay(overlay);
     }
@@ -709,6 +719,11 @@ void VR::ProcessMenuInput()
         };
         overlayApi->SetOverlayMouseScale(m_MainMenuHandle, &mouseScaleMenu);
     }
+
+    // While the config panel is open, the config worker handles navigation,
+    // activation, and closing. Do not feed the base VGUI menu behind it.
+    if (configModal)
+        return;
 
     const auto controllerHoveringOverlay = [&](xr::VROverlayHandle_t overlay)
         {
@@ -2250,7 +2265,6 @@ void VR::UpdateHandHudOverlays(PendingOverlayTextureBindBatch* pendingTextureBin
                 switch ((W)wid)
                 {
                 case W::MELEE:
-                case W::CHAINSAW:
                 case W::MOLOTOV:
                 case W::PIPE_BOMB:
                 case W::VOMITJAR:
@@ -2266,6 +2280,9 @@ void VR::UpdateHandHudOverlays(PendingOverlayTextureBindBatch* pendingTextureBin
             };
 
         const bool rightAmmoEligible = (weaponId > 0 && isAmmoHudEligible(weaponId) && clip >= 0);
+        // The chainsaw stores its fuel in m_iClip1 (30 units by default) and
+        // has no meaningful reserve ammo, so show fuel only without a slash.
+        const bool chainsawFuel = (weaponId == (int)C_WeaponCSBase::WeaponID::CHAINSAW);
         if (!rightAmmoEligible)
         {
             if (dbgTick)
@@ -2325,11 +2342,13 @@ void VR::UpdateHandHudOverlays(PendingOverlayTextureBindBatch* pendingTextureBin
         const int slashW = 16;
         const int clipWMax = sevenSegWidthAuto(digitCountAuto((std::max)(0, m_HudMaxClipObserved)), clipStAuto);
         const int resWMax = pistolInfinite ? 24 : sevenSegWidthAuto(digitCountAuto((std::max)(0, m_HudMaxReserveObserved)), resStAuto);
-        const int totalWMax = clipWMax + slashW + resWMax;
+        const int totalWMax = chainsawFuel ? (clipWMax + 8 + 48) : (clipWMax + slashW + resWMax);
         const bool willDrawUpg = rightAmmoEligible && (upg > 0) && (((upgBits & 1) != 0) || ((upgBits & 2) != 0));
 
         // Padding chosen to match existing bracket/inner-box margins.
         int cropW = rightAmmoEligible ? (std::max)(96, totalWMax + 28) : (std::max)(180, texW);
+        if (chainsawFuel)
+            cropW = (std::max)(cropW, clipWMax + 78);
         if (willDrawUpg)
             cropW = (std::max)(cropW, totalWMax + 28 + 90);
         cropW = (std::min)(texW, cropW);
@@ -2350,8 +2369,8 @@ void VR::UpdateHandHudOverlays(PendingOverlayTextureBindBatch* pendingTextureBin
         const bool changed = (clip != m_LastHudClip) || (reserve != m_LastHudReserve) || (upg != m_LastHudUpg) || (upgBits != m_LastHudUpgBits);
         if (dbgTick)
         {
-            Game::logMsg("[VR][HandHUD] right: wid=%d clip=%d res=%d upg=%d bits=0x%X pistolInf=%d changed=%d",
-                weaponId, clip, reserve, upg, upgBits, pistolInfinite ? 1 : 0, changed ? 1 : 0);
+            Game::logMsg("[VR][HandHUD] right: wid=%d clip=%d res=%d upg=%d bits=0x%X pistolInf=%d fuel=%d changed=%d",
+                weaponId, clip, reserve, upg, upgBits, pistolInfinite ? 1 : 0, chainsawFuel ? 1 : 0, changed ? 1 : 0);
         }
         m_LastHudClip = clip;
         m_LastHudReserve = reserve;
@@ -2411,20 +2430,29 @@ void VR::UpdateHandHudOverlays(PendingOverlayTextureBindBatch* pendingTextureBin
 
         const int clipW = sevenSegWidth(digitCount((std::max)(0, clip)), clipSt);
         const int resW = pistolInfinite ? 24 : sevenSegWidth(digitCount((std::max)(0, reserve)), resSt);
-        const int totalW = clipW + slashW + resW;
+        constexpr int kFuelLabelW = 48;
+        const int totalW = chainsawFuel ? (clipW + 8 + kFuelLabelW) : (clipW + slashW + resW);
         const int yBase = 46;
         int x = (std::max)(6, (visW - totalW) / 2);
 
         if (rightAmmoEligible)
         {
             Draw7SegInt(s, x, yBase, (std::max)(0, clip), clipSt, clipColor);
-            x += clipW + 2;
-            DrawText5x7(s, x, yBase + 4, "/", { 200, 200, 200, 220 }, 2);
-            x += slashW;
-            if (pistolInfinite)
-                DrawInfinity(s, x, yBase + 4, 24, 10, { 240, 240, 240, 230 });
+            if (chainsawFuel)
+            {
+                // No reserve ammo for the chainsaw: label the number as fuel.
+                DrawText5x7(s, x + clipW + 8, yBase + 4, "FUEL", { 200, 200, 200, 220 }, 2);
+            }
             else
-                Draw7SegInt(s, x, yBase, (std::max)(0, reserve), resSt, resColor);
+            {
+                x += clipW + 2;
+                DrawText5x7(s, x, yBase + 4, "/", { 200, 200, 200, 220 }, 2);
+                x += slashW;
+                if (pistolInfinite)
+                    DrawInfinity(s, x, yBase + 4, 24, 10, { 240, 240, 240, 230 });
+                else
+                    Draw7SegInt(s, x, yBase, (std::max)(0, reserve), resSt, resColor);
+            }
 
             const bool hasInc = (upgBits & 1) != 0;
             const bool hasExp = (upgBits & 2) != 0;

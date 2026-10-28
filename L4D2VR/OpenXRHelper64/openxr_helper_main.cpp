@@ -2300,7 +2300,7 @@ namespace
 
         static const std::array<BooleanActionDef, 32>& BooleanDefs();
         static const std::array<BooleanActionDef, 4>& ExtraBooleanDefs();
-        static const std::array<FloatDigitalActionDef, 5>& FloatDigitalDefs();
+        static const std::array<FloatDigitalActionDef, 6>& FloatDigitalDefs();
         static const std::array<AnalogActionDef, 2>& AnalogDefs();
 
         bool Path(const char* text, XrPath& out, Logger& log);
@@ -4713,15 +4713,15 @@ float4 main(float4 position : SV_Position, float2 uv : TEXCOORD0) : SV_Target
         return defs;
     }
 
-    const std::array<OpenXrInputBridge::FloatDigitalActionDef, 5>& OpenXrInputBridge::FloatDigitalDefs()
+    const std::array<OpenXrInputBridge::FloatDigitalActionDef, 6>& OpenXrInputBridge::FloatDigitalDefs()
     {
-        static const std::array<FloatDigitalActionDef, 5> defs =
+        static const std::array<FloatDigitalActionDef, 6> defs =
         {{
             { L4D2VROpenXrActionId::PrimaryAttack, "primary_attack", "Primary Attack", 0.45f },
             { L4D2VROpenXrActionId::SecondaryAttack, "secondary_attack_value", "Secondary Attack Value", 0.45f },
             { L4D2VROpenXrActionId::Use, "use", "Use", 0.45f },
             { L4D2VROpenXrActionId::Reload, "reload", "Reload", 0.45f },
-            { L4D2VROpenXrActionId::Flashlight, "flashlight_value", "Flashlight Grip", 0.55f },
+            { L4D2VROpenXrActionId::Crouch, "crouch_value", "Crouch Grip", 0.55f },
         }};
         return defs;
     }
@@ -5016,28 +5016,28 @@ float4 main(float4 position : SV_Position, float2 uv : TEXCOORD0) : SV_Target
 
         AddBinding(b, m_AnalogActions[Index(L4D2VROpenXrActionId::Walk)], leftStick.c_str());
         AddBinding(b, m_AnalogActions[Index(L4D2VROpenXrActionId::Turn)], rightStick.c_str());
-        // Left stick click = recenter. Right stick click = crouch; flashlight
-        // is the right grip value, which is what worked before.
+        // Match the original Oculus Touch manifest: left stick click recenters,
+        // right stick click toggles the flashlight. Crouch is the right grip.
         AddBinding(b, m_BooleanActions[Index(L4D2VROpenXrActionId::ResetPosition)], (leftStick + "/click").c_str());
+        AddBinding(b, m_BooleanActions[Index(L4D2VROpenXrActionId::Flashlight)], (rightStick + "/click").c_str());
 
         AddBinding(b, m_FloatDigitalActions[Index(L4D2VROpenXrActionId::PrimaryAttack)], "/user/hand/right/input/trigger/value");
         AddBinding(b, m_FloatDigitalActions[Index(L4D2VROpenXrActionId::SecondaryAttack)], "/user/hand/left/input/trigger/value");
 
         // Oculus Touch exposes thumbstick x/y/click, not dpad subpaths. Menu
         // and item dpads are synthesized from the analog Walk/Turn values in
-        // PublishDerivedDpadActions. Right stick click is Crouch.
-        AddBinding(b, m_BooleanActions[Index(L4D2VROpenXrActionId::Crouch)], (rightStick + "/click").c_str());
+        // PublishDerivedDpadActions.
     }
 
     void OpenXrInputBridge::AddGripValueBindings(
         std::vector<XrActionSuggestedBinding>& b,
         const char* gripValueName)
     {
-        // Touch grip is squeeze/value, not squeeze/click. Left grip reloads,
-        // right grip toggles the flashlight (the binding that worked before).
+        // Touch grip is squeeze/value, not squeeze/click. Match the original
+        // manifest: left grip reloads, right grip crouches.
         (void)gripValueName;
         AddBinding(b, m_FloatDigitalActions[Index(L4D2VROpenXrActionId::Reload)], "/user/hand/left/input/squeeze/value");
-        AddBinding(b, m_FloatDigitalActions[Index(L4D2VROpenXrActionId::Flashlight)], "/user/hand/right/input/squeeze/value");
+        AddBinding(b, m_FloatDigitalActions[Index(L4D2VROpenXrActionId::Crouch)], "/user/hand/right/input/squeeze/value");
     }
 
     void OpenXrInputBridge::AddTouchFaceButtonBindings(std::vector<XrActionSuggestedBinding>& b)
@@ -5487,9 +5487,22 @@ float4 main(float4 position : SV_Position, float2 uv : TEXCOORD0) : SV_Target
             if (CurrentControllerFamily() == L4D2VR_OPENXR_CONTROLLER_FAMILY_TOUCH)
             {
                 // Touch has no thumbstick dpad paths; the manifest uses north/
-                // south for previous/next item. Jump is on right A.
-                SetDerivedDigital(outState, L4D2VROpenXrActionId::PrevItem, turn.y > kPress);
-                SetDerivedDigital(outState, L4D2VROpenXrActionId::NextItem, turn.y < -kPress);
+                // south for previous/next item. Keep the original dpad's
+                // non-overlapping sectors: a diagonal stick deflection belongs
+                // to the horizontal axis, so rotating with the stick must not
+                // flip items. Hysteresis prevents chatter at the threshold.
+                const auto verticalDpad = [&](bool positive) -> bool
+                {
+                    const size_t id = Index(positive
+                        ? L4D2VROpenXrActionId::PrevItem
+                        : L4D2VROpenXrActionId::NextItem);
+                    const bool wasDown = m_DerivedDigitalInitialized[id] && m_DerivedDigitalDown[id];
+                    const float threshold = wasDown ? 0.55f : kPress;
+                    const float vertical = positive ? turn.y : -turn.y;
+                    return vertical > threshold && vertical > std::fabs(turn.x) * 1.5f;
+                };
+                SetDerivedDigital(outState, L4D2VROpenXrActionId::PrevItem, verticalDpad(true));
+                SetDerivedDigital(outState, L4D2VROpenXrActionId::NextItem, verticalDpad(false));
             }
             else
             {
@@ -5550,7 +5563,7 @@ float4 main(float4 position : SV_Position, float2 uv : TEXCOORD0) : SV_Target
         synthesizeHand(
             L4D2VR_OPENXR_HAND_RIGHT,
             L4D2VROpenXrActionId::PrimaryAttack,
-            L4D2VROpenXrActionId::Flashlight);
+            L4D2VROpenXrActionId::Crouch);
     }
 
     void OpenXrInputBridge::LocateControllerPoses(XrTime displayTime, L4D2VROpenXrInputStateDesc& outState, Logger& log)

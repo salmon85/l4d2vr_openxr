@@ -1695,12 +1695,9 @@ void VR::ProcessInput()
         }
     }
 
-    // Right stick click toggles crouch. The Crouch action is a momentary
-    // button, so latch it instead of requiring a hold.
-    if (crouchJustPressed)
-        m_CrouchToggleActive = !m_CrouchToggleActive;
-
-    const bool wantDuck = (!suppressCrouch) && (crouchButtonDown || m_CrouchToggleActive);
+    // Right grip crouches while held, matching the original Oculus Touch
+    // manifest. The Crouch action is a momentary button, so do not latch it.
+    const bool wantDuck = (!suppressCrouch) && crouchButtonDown;
     // IMPORTANT: only release -duck if *we* previously issued +duck.
     // Otherwise we would cancel the player's real keyboard input (e.g. Ctrl +duck in mouse mode).
     if (wantDuck && !m_DuckCmdOwned)
@@ -1716,10 +1713,8 @@ void VR::ProcessInput()
 
     if (flashlightJustPressed)
     {
-        if (crouchButtonDown)
-            SendFunctionKey(VK_F1);
-        else
-            IssueFlashlightToggle(true);
+        // Right stick click toggles the flashlight in the original manifest.
+        IssueFlashlightToggle(true);
     }
 
     if (PressedDigitalAction(m_Spray, true))
