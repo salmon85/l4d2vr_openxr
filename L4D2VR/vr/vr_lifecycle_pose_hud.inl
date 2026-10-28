@@ -825,11 +825,9 @@ void VR::ProcessMenuInput()
                 m_Game->m_VguiInput->InternalMouseWheeled((int)vrEvent.data.scroll.ydelta);
                 break;
             case xr::VREvent_ButtonPress:
-                if (button == xr::k_EButton_IndexController_A)
-                {
-                    g_Game->ClientCmd_Unrestricted("gameui_hide\n");
-                    g_Game->ClientCmd("gameui_hide\n");
-                }
+                // A is MenuSelect in the original Touch bindings. Do not close
+                // the game UI here; activation is sent as a menu key below.
+                (void)button;
                 break;
             }
         }
@@ -846,7 +844,7 @@ void VR::ProcessMenuInput()
             m_Game->m_VguiInput->InternalKeyCodeReleased(key);
         };
 
-    if (!isHoveringOverlay && PressedDigitalAction(m_MenuSelect, true))
+    if (PressedDigitalAction(m_MenuSelect, true))
         sendMenuKey(ButtonCode_t::KEY_SPACE);
     if (PressedDigitalAction(m_MenuBack, true) || PressedDigitalAction(m_Pause, true))
         sendMenuKey(ButtonCode_t::KEY_ESCAPE);
