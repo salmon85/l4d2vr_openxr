@@ -631,9 +631,10 @@ bool VR::ShouldShowFlatHudForMenu() const
     if (handHudAvailable)
     {
         // A stray VGUI cursor can remain "visible" during gameplay after a menu
-        // closes. With hand HUDs enabled, only show the flat HUD for a real
-        // pause or when the controller is actually pointing at the HUD plane.
-        return paused || (cursorVisible && m_GameHudOverlayHovered);
+        // closes. With hand HUDs enabled, only a real pause may bring back the
+        // flat HUD, otherwise the stale pause/game UI stays in the headset.
+        (void)cursorVisible;
+        return paused;
     }
     return paused || cursorVisible;
 }
