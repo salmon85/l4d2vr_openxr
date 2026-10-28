@@ -1883,6 +1883,7 @@ void VR::ProcessInput()
     const bool cursorVisible = m_Game->m_VguiSurface && m_Game->m_VguiSurface->IsCursorVisible();
     // ProcessInput only runs outside menu/cursor mode; clear any stale hover.
     m_GameHudOverlayHovered = false;
+    HideMenuPointer();
     UpdateHudLiftGestureState(true);
     const bool wantsTopHud = ShouldShowFlatHudForMenu() || ShouldShowFlatGameplayHud();
     const int queueModeNow = (m_Game != nullptr) ? m_Game->GetMatQueueMode() : 0;

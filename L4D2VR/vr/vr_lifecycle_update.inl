@@ -2200,6 +2200,10 @@ void VR::Update()
     if (configOverlayModal || !(ShouldShowFlatHudForMenu() || ShouldShowFlatGameplayHud()))
         xr::VROverlay()->HideOverlay(m_HUDTopHandle);
 
+    // Never leave the desktop/main-menu panel visible during live gameplay.
+    if (!menuInputActive && m_Game->m_EngineClient && m_Game->m_EngineClient->IsInGame())
+        xr::VROverlay()->HideOverlay(m_MainMenuHandle);
+
     // UpdateTracking publishes the queued ViewParams snapshot before ProcessInput,
     // while smooth/snap turning modifies m_RotationOffset inside ProcessInput.
     // Refresh this independently atomic scalar so the queued render path can

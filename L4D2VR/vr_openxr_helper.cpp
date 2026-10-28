@@ -419,17 +419,10 @@ void PublishOverlayToBridge(const OverlayState& overlay) {
         desc.offsetMeters[2] = 0.0f;
         desc.reserved1 = 0;
     } else if (overlayIndex == L4D2VR_OPENXR_OVERLAY_HUD) {
-        // Keep the HUD layer available for the whole gameplay session. Source
-        // toggles the top HUD overlay on and off around pause/scoreboard/VGUI
-        // transitions; without this the helper drops the layer every other
-        // frame and the HUD/pause menu flickers.
-        const bool inGame =
-            g_Game && g_Game->m_EngineClient && g_Game->m_EngineClient->IsInGame();
-        if (inGame && hasTexture) {
-            desc.visible = 1u;
-            desc.valid = 1u;
-        }
-
+        // Honor the game-side ShowOverlay/HideOverlay state. The game now
+        // explicitly keeps the flat HUD hidden while the hand HUDs are active,
+        // so forcing it visible here left the pause panel (or its cleared black
+        // texture) in the headset after unpausing.
         desc.widthMeters = 1.30f;
         desc.distanceMeters = 1.20f;
         desc.offsetMeters[0] = 0.0f;

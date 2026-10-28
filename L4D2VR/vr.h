@@ -330,6 +330,10 @@ public:
 	xr::VROverlayHandle_t m_MainMenuHandle;
 	xr::VROverlayHandle_t m_HUDTopHandle;
 	std::array<xr::VROverlayHandle_t, 4> m_HUDBottomHandles{};
+	// Small crosshair shown where the controller ray meets a menu overlay.
+	xr::VROverlayHandle_t m_MenuPointerHandle = xr::k_ulOverlayHandleInvalid;
+	bool m_MenuPointerTextureReady = false;
+	bool m_MenuPointerShown = false;
 	// Gun-mounted scope overlay (render-to-texture lens)
 	xr::VROverlayHandle_t m_ScopeHandle = xr::k_ulOverlayHandleInvalid;
 	// Rear mirror overlay (off-hand)
@@ -3956,6 +3960,8 @@ public:
 	bool UpdatePosesAndActions();
 	void GetViewParameters();
 	void ProcessMenuInput();
+	void UpdateMenuPointer(xr::VROverlayHandle_t overlayHandle, const xr::VROverlayIntersectionResults_t& hit);
+	void HideMenuPointer();
 	void ReleaseOwnedCommandsForGameMenu();
 	void ResetMenuNavigationStickState();
 	void ProcessInput();
@@ -3975,7 +3981,7 @@ public:
 	xr::HmdMatrix34_t VMatrixToHmdMatrix(const VMatrix& vMat);
 	xr::HmdMatrix34_t GetControllerTipMatrix(xr::ETrackedControllerRole controllerRole);
 	xr::HmdMatrix34_t BuildThirdPersonSubmitPose() const;
-	bool CheckOverlayIntersectionForController(xr::VROverlayHandle_t overlayHandle, xr::ETrackedControllerRole controllerRole);
+	bool CheckOverlayIntersectionForController(xr::VROverlayHandle_t overlayHandle, xr::ETrackedControllerRole controllerRole, xr::VROverlayIntersectionResults_t* outResults = nullptr);
 	QAngle GetLeftControllerAbsAngle();
 	Vector GetLeftControllerAbsPos();
 	QAngle GetRightControllerAbsAngle();

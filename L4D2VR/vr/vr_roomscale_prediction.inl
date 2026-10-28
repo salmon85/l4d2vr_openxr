@@ -1314,7 +1314,7 @@ xr::HmdMatrix34_t VR::GetControllerTipMatrix(xr::ETrackedControllerRole controll
     return identity;
 }
 
-bool VR::CheckOverlayIntersectionForController(xr::VROverlayHandle_t overlayHandle, xr::ETrackedControllerRole controllerRole)
+bool VR::CheckOverlayIntersectionForController(xr::VROverlayHandle_t overlayHandle, xr::ETrackedControllerRole controllerRole, xr::VROverlayIntersectionResults_t* outResults)
 {
     xr::TrackedDeviceIndex_t deviceIndex = m_System->GetTrackedDeviceIndexForControllerRole(controllerRole);
 
@@ -1337,7 +1337,10 @@ bool VR::CheckOverlayIntersectionForController(xr::VROverlayHandle_t overlayHand
     params.vSource = { controllerVMatrix.m[3][0],  controllerVMatrix.m[3][1],  controllerVMatrix.m[3][2] };
     params.vDirection = { -controllerVMatrix.m[2][0], -controllerVMatrix.m[2][1], -controllerVMatrix.m[2][2] };
 
-    return m_Overlay->ComputeOverlayIntersection(overlayHandle, &params, &results);
+    const bool hit = m_Overlay->ComputeOverlayIntersection(overlayHandle, &params, &results);
+    if (hit && outResults)
+        *outResults = results;
+    return hit;
 }
 
 

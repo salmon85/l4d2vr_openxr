@@ -1225,6 +1225,14 @@ VR::VR(Game* game)
 
     // Gun-mounted scope lens overlay (render-to-texture)
     m_Overlay->CreateOverlay("ScopeOverlayKey", "ScopeOverlay", &m_ScopeHandle);
+    // Menu aim pointer (reuses the config menu-button bridge slot; the config
+    // panel worker is disabled).
+    m_Overlay->CreateOverlay("l4d2vr.config.menu_button", "MenuPointer", &m_MenuPointerHandle);
+    if (m_MenuPointerHandle != xr::k_ulOverlayHandleInvalid)
+    {
+        m_Overlay->SetOverlayInputMethod(m_MenuPointerHandle, xr::VROverlayInputMethod_None);
+        m_Overlay->SetOverlaySortOrder(m_MenuPointerHandle, 500);
+    }
     m_Overlay->CreateOverlay("RearMirrorOverlayKey", "RearMirrorOverlay", &m_RearMirrorHandle);
     // Hand HUD overlays (raw textures, controller anchored)
     m_Overlay->CreateOverlay("LeftWristHudOverlayKey", "LeftWristHUD", &m_LeftWristHudHandle);
