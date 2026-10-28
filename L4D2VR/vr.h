@@ -3962,6 +3962,7 @@ public:
 	void ProcessMenuInput();
 	void UpdateMenuPointer(xr::VROverlayHandle_t overlayHandle, const xr::VROverlayIntersectionResults_t& hit);
 	void HideMenuPointer();
+	void EnsureMenuPointerTexture();
 	void ReleaseOwnedCommandsForGameMenu();
 	void ResetMenuNavigationStickState();
 	void ProcessInput();

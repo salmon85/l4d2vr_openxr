@@ -649,6 +649,58 @@ bool VR::GetAnalogActionData(xr::VRActionHandle_t& actionHandle, xr::InputAnalog
     return result == xr::VRInputError_None;
 }
 
+void VR::EnsureMenuPointerTexture()
+{
+    if (m_MenuPointerTextureReady || m_MenuPointerHandle == xr::k_ulOverlayHandleInvalid)
+        return;
+
+    xr::Overlay* ov = xr::VROverlay();
+    if (!ov)
+        return;
+
+    constexpr int kSize = 64;
+    std::vector<uint8_t> pixels((size_t)kSize * kSize * 4, 0);
+    for (int y = 0; y < kSize; ++y)
+    {
+        for (int x = 0; x < kSize; ++x)
+        {
+            const float dx = (float)x - (kSize - 1) * 0.5f;
+            const float dy = (float)y - (kSize - 1) * 0.5f;
+            const float d2 = dx * dx + dy * dy;
+            const bool center = d2 <= 4.0f * 4.0f;
+            const bool ring = d2 >= 9.0f * 9.0f && d2 <= 11.0f * 11.0f;
+            const bool cross = (std::fabs(dx) <= 1.2f && std::fabs(dy) <= 17.0f) ||
+                (std::fabs(dy) <= 1.2f && std::fabs(dx) <= 17.0f);
+            if (!center && !ring && !cross)
+                continue;
+
+            uint8_t* p = pixels.data() + ((size_t)y * kSize + x) * 4;
+            if (center)
+            {
+                p[0] = 255; p[1] = 255; p[2] = 255; p[3] = 255;
+            }
+            else
+            {
+                p[0] = 90; p[1] = 255; p[2] = 170; p[3] = 255;
+            }
+        }
+    }
+
+    if (ov->SetOverlayRaw(m_MenuPointerHandle, pixels.data(), kSize, kSize, 4) != xr::VROverlayError_None)
+    {
+        static int s_failLogBudget = 4;
+        if (s_failLogBudget-- > 0)
+            Game::logMsg("[VR][MenuPointer] SetOverlayRaw failed");
+        return;
+    }
+
+    ov->SetOverlayAlpha(m_MenuPointerHandle, 1.0f);
+    ov->SetOverlayWidthInMeters(m_MenuPointerHandle, 0.02f);
+    ov->SetOverlaySortOrder(m_MenuPointerHandle, 500);
+    m_MenuPointerTextureReady = true;
+    Game::logMsg("[VR][MenuPointer] texture ready");
+}
+
 void VR::UpdateMenuPointer(xr::VROverlayHandle_t overlayHandle, const xr::VROverlayIntersectionResults_t& hit)
 {
     if (m_MenuPointerHandle == xr::k_ulOverlayHandleInvalid ||
@@ -659,44 +711,9 @@ void VR::UpdateMenuPointer(xr::VROverlayHandle_t overlayHandle, const xr::VROver
     if (!ov)
         return;
 
+    EnsureMenuPointerTexture();
     if (!m_MenuPointerTextureReady)
-    {
-        constexpr int kSize = 64;
-        std::vector<uint8_t> pixels((size_t)kSize * kSize * 4, 0);
-        for (int y = 0; y < kSize; ++y)
-        {
-            for (int x = 0; x < kSize; ++x)
-            {
-                const float dx = (float)x - (kSize - 1) * 0.5f;
-                const float dy = (float)y - (kSize - 1) * 0.5f;
-                const float d2 = dx * dx + dy * dy;
-                const bool center = d2 <= 4.0f * 4.0f;
-                const bool ring = d2 >= 9.0f * 9.0f && d2 <= 11.0f * 11.0f;
-                const bool cross = (std::fabs(dx) <= 1.2f && std::fabs(dy) <= 17.0f) ||
-                    (std::fabs(dy) <= 1.2f && std::fabs(dx) <= 17.0f);
-                if (!center && !ring && !cross)
-                    continue;
-
-                uint8_t* p = pixels.data() + ((size_t)y * kSize + x) * 4;
-                if (center)
-                {
-                    p[0] = 255; p[1] = 255; p[2] = 255; p[3] = 255;
-                }
-                else
-                {
-                    p[0] = 90; p[1] = 255; p[2] = 170; p[3] = 255;
-                }
-            }
-        }
-
-        if (ov->SetOverlayRaw(m_MenuPointerHandle, pixels.data(), kSize, kSize, 4) != xr::VROverlayError_None)
-            return;
-
-        ov->SetOverlayAlpha(m_MenuPointerHandle, 1.0f);
-        ov->SetOverlayWidthInMeters(m_MenuPointerHandle, 0.02f);
-        ov->SetOverlaySortOrder(m_MenuPointerHandle, 500);
-        m_MenuPointerTextureReady = true;
-    }
+        return;
 
     xr::ETrackingUniverseOrigin origin = xr::TrackingUniverseStanding;
     xr::HmdMatrix34_t overlayTransform{};
@@ -747,6 +764,13 @@ void VR::UpdateMenuPointer(xr::VROverlayHandle_t overlayHandle, const xr::VROver
     ov->SetOverlayWidthInMeters(m_MenuPointerHandle, 0.02f);
     ov->ShowOverlay(m_MenuPointerHandle);
     m_MenuPointerShown = true;
+
+    static int s_showLogBudget = 6;
+    if (s_showLogBudget-- > 0)
+    {
+        Game::logMsg("[VR][MenuPointer] show overlay=%llu u=%.3f v=%.3f pos=(%.3f %.3f %.3f)",
+            static_cast<unsigned long long>(overlayHandle), u, v, point.x, point.y, point.z);
+    }
 }
 
 void VR::HideMenuPointer()
