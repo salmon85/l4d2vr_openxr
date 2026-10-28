@@ -830,6 +830,8 @@ void VR::ProcessMenuInput()
 
     const auto controllerHoveringOverlay = [&](xr::VROverlayHandle_t overlay)
         {
+            if (!overlayApi->IsOverlayVisible(overlay))
+                return false;
             return CheckOverlayIntersectionForController(overlay, xr::TrackedControllerRole_LeftHand) ||
                 CheckOverlayIntersectionForController(overlay, xr::TrackedControllerRole_RightHand);
         };
