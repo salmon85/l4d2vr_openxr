@@ -2167,6 +2167,7 @@ void VR::Update()
         m_GameMenuInputActive.store(false, std::memory_order_release);
         m_PreviousGameMenuInputActive = false;
         ResetMenuNavigationStickState();
+        HideMenuPointer();
         PumpSpeechToTextVoiceBroadcast();
         FlushHapticMixer();
         markPresentSpikeUpdatePhase(m_PresentSpikeUpdateInputUs);
