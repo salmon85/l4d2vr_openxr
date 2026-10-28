@@ -698,39 +698,44 @@ void VR::UpdateMenuPointer(xr::VROverlayHandle_t overlayHandle, const xr::VROver
         m_MenuPointerTextureReady = true;
     }
 
-    // Match the helper's fixed HUD/menu placement (see PublishOverlayToBridge)
-    // so the pointer lands exactly on the rendered quad.
-    const bool mainMenu = (overlayHandle == m_MainMenuHandle);
-    const float overlayDistance = mainMenu ? 1.80f : 1.20f;
-    const float overlayOffsetY = mainMenu ? -0.08f : -0.12f;
-    const float overlayWidth = mainMenu ? 2.00f : 1.30f;
-    const float overlayHeight = mainMenu ? 1.125f : (1.30f * 0.5625f);
+    xr::ETrackingUniverseOrigin origin = xr::TrackingUniverseStanding;
+    xr::HmdMatrix34_t overlayTransform{};
+    if (ov->GetOverlayTransformAbsolute(overlayHandle, &origin, &overlayTransform) != xr::VROverlayError_None)
+    {
+        HideMenuPointer();
+        return;
+    }
 
-    xr::TrackedDevicePose_t hmdPose = m_Poses[xr::k_unTrackedDeviceIndex_Hmd];
-    xr::HmdMatrix34_t hmdMat = hmdPose.mDeviceToAbsoluteTracking;
+    float overlayWidth = 1.30f;
+    ov->GetOverlayWidthInMeters(overlayHandle, &overlayWidth);
+    overlayWidth = std::clamp(overlayWidth, 0.05f, 3.0f);
+    const float aspect = (m_RenderWidth > 0)
+        ? (static_cast<float>(m_RenderHeight) / static_cast<float>(m_RenderWidth))
+        : 0.5625f;
+    const float overlayHeight = overlayWidth * aspect;
 
-    Vector hmdPos = { hmdMat.m[0][3], hmdMat.m[1][3], hmdMat.m[2][3] };
-    Vector forward = { -hmdMat.m[0][2], 0.0f, -hmdMat.m[2][2] };
-    Vector right = { hmdMat.m[0][0], 0.0f, hmdMat.m[2][0] };
-    if (VectorNormalize(forward) == 0.0f)
-        forward = { 0.0f, 0.0f, -1.0f };
+    Vector center = { overlayTransform.m[0][3], overlayTransform.m[1][3], overlayTransform.m[2][3] };
+    Vector right = { overlayTransform.m[0][0], overlayTransform.m[1][0], overlayTransform.m[2][0] };
+    Vector up = { overlayTransform.m[0][1], overlayTransform.m[1][1], overlayTransform.m[2][1] };
+    Vector normal = { overlayTransform.m[0][2], overlayTransform.m[1][2], overlayTransform.m[2][2] };
     if (VectorNormalize(right) == 0.0f)
         right = { 1.0f, 0.0f, 0.0f };
-    const Vector up = { 0.0f, 1.0f, 0.0f };
+    if (VectorNormalize(up) == 0.0f)
+        up = { 0.0f, 1.0f, 0.0f };
+    if (VectorNormalize(normal) == 0.0f)
+        normal = { 0.0f, 0.0f, -1.0f };
 
-    const Vector center = hmdPos + forward * overlayDistance + up * overlayOffsetY;
     const float u = std::clamp(hit.vUVs.v[0], 0.0f, 1.0f);
     const float v = std::clamp(hit.vUVs.v[1], 0.0f, 1.0f);
     Vector point = center + right * ((u - 0.5f) * overlayWidth) + up * ((v - 0.5f) * overlayHeight);
 
-    Vector towardHmd = hmdPos - point;
+    Vector towardHmd = m_HmdPosAbs - point;
     if (towardHmd.LengthSqr() > 1e-6f)
     {
         VectorNormalize(towardHmd);
         point += towardHmd * 0.012f;
     }
 
-    const Vector normal = -forward;
     xr::HmdMatrix34_t transform =
     {
         right.x, up.x, normal.x, point.x,
@@ -738,7 +743,7 @@ void VR::UpdateMenuPointer(xr::VROverlayHandle_t overlayHandle, const xr::VROver
         right.z, up.z, normal.z, point.z
     };
 
-    ov->SetOverlayTransformAbsolute(m_MenuPointerHandle, xr::TrackingUniverseStanding, &transform);
+    ov->SetOverlayTransformAbsolute(m_MenuPointerHandle, origin, &transform);
     ov->SetOverlayWidthInMeters(m_MenuPointerHandle, 0.02f);
     ov->ShowOverlay(m_MenuPointerHandle);
     m_MenuPointerShown = true;

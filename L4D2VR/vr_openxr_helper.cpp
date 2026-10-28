@@ -423,13 +423,17 @@ void PublishOverlayToBridge(const OverlayState& overlay) {
         // explicitly keeps the flat HUD hidden while the hand HUDs are active,
         // so forcing it visible here left the pause panel (or its cleared black
         // texture) in the headset after unpausing.
-        desc.widthMeters = 1.30f;
+        //
+        // Use the game's HMD-relative transform and width so hit testing (laser
+        // cursor/pointer) and the submitted quad stay aligned.
+        desc.widthMeters = std::clamp(
+            std::isfinite(overlay.widthMeters) ? overlay.widthMeters : 1.70f,
+            0.5f, 2.5f);
         desc.distanceMeters = 1.20f;
         desc.offsetMeters[0] = 0.0f;
         desc.offsetMeters[1] = -0.12f;
         desc.offsetMeters[2] = 0.0f;
         desc.reserved1 = L4D2VR_OPENXR_OVERLAY_FLAG_BLEND_ALPHA;
-        desc.transformValid = 0;
     } else {
         // Config panel / config menu button / aim pointer. The game owns the
         // world-fixed transform and size; keep the alpha blend used by the GDI
