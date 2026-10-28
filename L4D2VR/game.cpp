@@ -19,6 +19,7 @@
 
 #include "sdk.h"
 #include "vr.h"
+#include "openxr_helper_bridge.h"
 #include "hooks.h"
 #include "offsets.h"
 #include "sigscanner.h"

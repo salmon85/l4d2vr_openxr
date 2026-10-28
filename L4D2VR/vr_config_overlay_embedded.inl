@@ -764,6 +764,10 @@ namespace
         bool ctrlNavDownPrev = false;
         bool ctrlNavLeftPrev = false;
         bool ctrlNavRightPrev = false;
+        int pointerX = -1;
+        int pointerY = -1;
+        bool pointerVisible = false;
+        uint32_t pointerDirtyMs = 0;
         bool resetConfirmVisible = false;
         bool advancedMode = false;
         bool dirty = true;
@@ -6375,6 +6379,21 @@ FlashlightEnhancementEnabled=false
             g.normalFont, CfgEntUsageColor(s), DT_RIGHT);
     }
 
+    static void CfgDrawPointer(CfgGdiSurface& g, const CfgOverlayState& s)
+    {
+        if (!s.pointerVisible || s.pointerX < 0 || s.pointerY < 0)
+            return;
+
+        const int x = s.pointerX;
+        const int y = s.pointerY;
+        // Dark outline keeps the crosshair readable on both light and dark rows.
+        CfgGdiFill(g, x - 8, y - 1, 17, 3, { 8, 10, 14 });
+        CfgGdiFill(g, x - 1, y - 8, 3, 17, { 8, 10, 14 });
+        CfgGdiFill(g, x - 7, y, 15, 1, { 120, 255, 220 });
+        CfgGdiFill(g, x, y - 7, 1, 15, { 120, 255, 220 });
+        CfgGdiFill(g, x - 1, y - 1, 3, 3, { 255, 255, 255 });
+    }
+
     static void CfgRender(CfgOverlayState& s)
     {
         CfgGdiSurface g;
@@ -6398,6 +6417,7 @@ FlashlightEnhancementEnabled=false
         if (s.panelMode == CfgPanelMode::MagazineCalibration)
         {
             CfgRenderMagazineCalibration(s, g);
+            CfgDrawPointer(g, s);
             CfgConvertGdiToRgba(s, g);
             s.dirty = false;
             s.needsUpload = true;
@@ -6617,11 +6637,17 @@ FlashlightEnhancementEnabled=false
         }
 
         CfgGdiText(g, 26, kCfgOverlayH - 43, 860, 34, s.status, g.smallFont, { 226, 232, 242 });
+        CfgGdiText(g, 26, kCfgOverlayH - 78, 1240, 30,
+            s.useChinese
+                ? "\xE6\x91\x87\xE6\x9D\x86\xEF\xBC\x9A\xE4\xB8\x8A\xE4\xB8\x8B\xE9\x80\x89\xE6\x8B\xA9\xEF\xBC\x8C\xE5\xB7\xA6\xE5\x8F\xB3\xE8\xB0\x83\xE6\x95\xB4\xEF\xBC\x9B" "A/\xE6\x89\xA3\xE6\x9C\xBA\xE7\xA1\xAE\xE8\xAE\xA4\xEF\xBC\x9B" "B/Y \xE5\x85\xB3\xE9\x97\xAD"
+                : "Stick: up/down select, left/right adjust   A/Trigger: accept   B/Y: close",
+            g.smallFont, { 150, 200, 180 });
         const std::string counter = total > 0 ? (std::to_string(s.selected + 1) + "/" + std::to_string(total)) : "0/0";
         CfgGdiText(g, 1010, kCfgOverlayH - 43, 240, 34, counter, g.normalFont, { 164, 180, 205 }, DT_RIGHT);
 
         (void)lastDrawnItem;
         CfgRenderResetConfirm(s, g);
+        CfgDrawPointer(g, s);
         CfgConvertGdiToRgba(s, g);
         s.dirty = false;
         s.needsUpload = true;
@@ -9420,6 +9446,18 @@ FlashlightEnhancementEnabled=false
                 int my = kCfgOverlayH - (int)std::lround(ev.data.mouse.y);
                 mx = (std::clamp)(mx, 0, kCfgOverlayW - 1);
                 my = (std::clamp)(my, 0, kCfgOverlayH - 1);
+                if (mx != s.pointerX || my != s.pointerY)
+                {
+                    s.pointerX = mx;
+                    s.pointerY = my;
+                    s.pointerVisible = true;
+                    const uint32_t nowMs = CfgNowMs();
+                    if (s.pointerDirtyMs == 0 || (nowMs - s.pointerDirtyMs) >= 80u)
+                    {
+                        s.pointerDirtyMs = nowMs;
+                        s.dirty = true;
+                    }
+                }
                 (void)mx;
                 if (s.panelMode == CfgPanelMode::Config)
                     CfgSelectHoveredRow(s, my);
@@ -9431,6 +9469,10 @@ FlashlightEnhancementEnabled=false
                 int my = kCfgOverlayH - (int)std::lround(ev.data.mouse.y);
                 mx = (std::clamp)(mx, 0, kCfgOverlayW - 1);
                 my = (std::clamp)(my, 0, kCfgOverlayH - 1);
+                s.pointerX = mx;
+                s.pointerY = my;
+                s.pointerVisible = true;
+                s.dirty = true;
                 if (s.panelMode == CfgPanelMode::Config)
                     CfgSelectHoveredRow(s, my);
                 CfgHandleClick(s, mx, my);
@@ -9520,14 +9562,18 @@ FlashlightEnhancementEnabled=false
         s.keyboardUserValue = 0;
         s.resetConfirmVisible = false;
         s.visible = false;
+        s.pointerVisible = false;
         s.hoverSelectionSuppressedUntilMs = 0;
         s.hoveredItem = -1;
         s.calibrationBoltPullFirstRunBlockedProfileKey.clear();
         s.calibrationBoltPullFirstRunSaveSkipped = false;
         CfgApplyCalibrationRuntimeState(s);
+        CfgSetBaseOverlaysBlocked(s, false);
         s.status = s.useChinese
             ? "\345\267\262\345\205\263\351\227\255\343\200\202\346\214\211 F8 \345\217\257\351\207\215\346\226\260\346\211\223\345\274\200\343\200\202"
             : "Closed. Press F8 to reopen.";
+        if (g_Game)
+            g_Game->logMsg("[VR][ConfigOverlay] closed by controller");
         s.dirty = true;
     }
 
@@ -9610,12 +9656,31 @@ FlashlightEnhancementEnabled=false
             return;
 
         VR* vrState = g_Game->m_VR;
+
+        // Prefer the helper's shared-memory snapshot: it is refreshed by the
+        // helper even when the game's present/input update is stalled, so the
+        // panel can always be closed and navigated.
+        L4D2VROpenXrInputStateDesc freshInput{};
+        uint32_t freshGeneration = 0;
+        const bool haveFreshInput =
+            L4D2VR_ReadOpenXrInputState(freshInput, &freshGeneration) && freshGeneration != 0;
+        const auto heldAction = [&](L4D2VROpenXrActionId id, xr::VRActionHandle_t& handle) -> bool
+            {
+                if (haveFreshInput)
+                {
+                    const uint32_t index = static_cast<uint32_t>(id);
+                    if (index < L4D2VR_OPENXR_ACTION_COUNT && freshInput.digitalActions[index].active)
+                        return freshInput.digitalActions[index].state != 0;
+                }
+                return CfgReadHeldAction(handle);
+            };
+
         const bool backHeld =
-            CfgReadHeldAction(vrState->m_MenuBack) ||
-            CfgReadHeldAction(vrState->m_Pause);
+            heldAction(L4D2VROpenXrActionId::MenuBack, vrState->m_MenuBack) ||
+            heldAction(L4D2VROpenXrActionId::Pause, vrState->m_Pause);
         const bool activateHeld =
-            CfgReadHeldAction(vrState->m_MenuSelect) ||
-            CfgReadHeldAction(vrState->m_ActionPrimaryAttack);
+            heldAction(L4D2VROpenXrActionId::MenuSelect, vrState->m_MenuSelect) ||
+            heldAction(L4D2VROpenXrActionId::PrimaryAttack, vrState->m_ActionPrimaryAttack);
 
         if (CfgEdgePressed(backHeld, s.ctrlBackPrev))
         {
@@ -9640,8 +9705,31 @@ FlashlightEnhancementEnabled=false
         bool stickLeft = false;
         bool stickRight = false;
         {
-            xr::InputAnalogActionData_t stick{};
-            if (vrState->GetAnalogActionData(vrState->m_ActionWalk, stick))
+            float walkX = 0.0f;
+            float walkY = 0.0f;
+            bool haveWalk = false;
+            if (haveFreshInput)
+            {
+                const uint32_t walkIndex = static_cast<uint32_t>(L4D2VROpenXrActionId::Walk);
+                if (walkIndex < L4D2VR_OPENXR_ACTION_COUNT && freshInput.analogActions[walkIndex].active)
+                {
+                    walkX = freshInput.analogActions[walkIndex].x;
+                    walkY = freshInput.analogActions[walkIndex].y;
+                    haveWalk = true;
+                }
+            }
+            if (!haveWalk)
+            {
+                xr::InputAnalogActionData_t stick{};
+                if (vrState->GetAnalogActionData(vrState->m_ActionWalk, stick))
+                {
+                    walkX = stick.x;
+                    walkY = stick.y;
+                    haveWalk = true;
+                }
+            }
+
+            if (haveWalk)
             {
                 constexpr float kNavPress = 0.62f;
                 constexpr float kNavRelease = 0.36f;
@@ -9652,10 +9740,10 @@ FlashlightEnhancementEnabled=false
                         previous = down;
                         return pressed;
                     };
-                stickUp = edge(stick.y, s.ctrlNavUpPrev);
-                stickDown = edge(-stick.y, s.ctrlNavDownPrev);
-                stickRight = edge(stick.x, s.ctrlNavRightPrev);
-                stickLeft = edge(-stick.x, s.ctrlNavLeftPrev);
+                stickUp = edge(walkY, s.ctrlNavUpPrev);
+                stickDown = edge(-walkY, s.ctrlNavDownPrev);
+                stickRight = edge(walkX, s.ctrlNavRightPrev);
+                stickLeft = edge(-walkX, s.ctrlNavLeftPrev);
             }
             else
             {
