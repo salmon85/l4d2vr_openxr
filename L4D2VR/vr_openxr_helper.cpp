@@ -431,10 +431,12 @@ void PublishOverlayToBridge(const OverlayState& overlay) {
         desc.reserved1 = L4D2VR_OPENXR_OVERLAY_FLAG_BLEND_ALPHA;
         desc.transformValid = 0;
     } else {
-        // Config panel / config menu button. The game owns the world-fixed
-        // transform and size; keep the alpha blend used by the GDI panels.
+        // Config panel / config menu button / aim pointer. The game owns the
+        // world-fixed transform and size; keep the alpha blend used by the GDI
+        // panels and the pointer crosshair.
+        const bool menuPointer = overlay.key == "l4d2vr.config.menu_button";
         const float requestedWidth = std::isfinite(overlay.widthMeters) ? overlay.widthMeters : 2.05f;
-        desc.widthMeters = std::clamp(requestedWidth, 0.10f, 3.0f);
+        desc.widthMeters = std::clamp(requestedWidth, menuPointer ? 0.005f : 0.10f, 3.0f);
         desc.distanceMeters = 1.35f;
         desc.offsetMeters[0] = 0.0f;
         desc.offsetMeters[1] = -0.05f;
