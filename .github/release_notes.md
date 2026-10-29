@@ -1,13 +1,18 @@
-## L4D2VR OpenXR build V.0.8.3
+## L4D2VR OpenXR build V.0.8.4
 
-### Highlights
+### Fix
 
-- Native OpenXR scene rendering with menu, pause, loading-screen, wrist HUD, and gun ammo HUD overlays.
-- Oculus Touch controls restored to the original manifest: right stick click = Flashlight, right grip = hold Crouch, left grip = Reload.
-- Item switching only fires on a vertically dominant right-stick deflection, so rotating no longer flips weapons.
-- Chainsaw fuel is shown on the right hand HUD.
-- The flat desktop HUD is hidden while the wrist/ammo HUDs are active; it no longer lingers after closing the pause menu.
-- Pause/menu navigation accepts A, B/Y, and the left stick from the controller.
+- The packaged `vr/config.sample` now uses the known-good runtime configuration from testing instead of the development source config.
+- This restores the original hand-pose and two-handed aim defaults that the previous release changed, including:
+  - left/right hand pose offsets and rotations
+  - two-handed aim strength, smoothing, offhand offset, grip target and virtual-stock strength
+  - native viewmodel hand pose offsets and glove curl defaults
+  - first-person body and hands-only defaults
+- HUD defaults remain: wrist HUD and gun-hand ammo HUD enabled, manual magazine reload disabled.
+
+### Binaries
+
+- `d3d9.dll` and `OpenXRHelper64.exe` are unchanged from V.0.8.3.
 
 ### Known limitations
 
